@@ -202,6 +202,10 @@ Content-sized caching is a separate GPUI follow-up. Equal comparable props reuse
 the cached view; props without a known `PartialEq` implementation conservatively
 invalidate it. Signal dependencies still invalidate the owning view.
 
+Use `cached = false` for rows that commonly all redraw in the same update.
+Every changed cached row must rebuild its cached output, which can cost more
+than drawing uncached. Caching helps when most rows stay unchanged between frames.
+
 Without caching, GPUI may redraw ancestors and siblings. The pinned backend also
 requires Rake subscriptions for cached function-component reads, collected across
 render, layout, and paint. State locality alone does not guarantee render isolation.

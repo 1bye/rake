@@ -206,6 +206,7 @@ struct Host {
     signals: usize,
     rows: Vec<Row>,
     next: usize,
+    renders: usize,
 }
 
 impl Host {
@@ -215,6 +216,7 @@ impl Host {
             signals,
             rows: Vec::new(),
             next: 0,
+            renders: 0,
         }
     }
 
@@ -265,6 +267,7 @@ fn change_values(scenario: &str, probes: &[Rc<Probe>], cx: &mut gpui::App) -> bo
 
 impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
         let mut parent = gpui::div().flex().flex_wrap().w(gpui::px(960.));
 
         for item in &mut self.rows {
@@ -342,11 +345,19 @@ fn measure(variant: Variant, count: usize, signals: usize, scenario: &str, sampl
     draw(&mut cx, window);
     let after_mount = LIVE_BYTES.load(Ordering::Relaxed) - baseline;
 
-    let probes: Vec<_> = window
+    let (probes, mut renders): (Vec<_>, _) = window
         .read_with(&cx, |host, _| {
-            host.rows.iter().map(|row| row.probe.clone()).collect()
+            (
+                host.rows.iter().map(|row| row.probe.clone()).collect(),
+                host.renders,
+            )
         })
         .unwrap();
+    let updated_rows = match scenario {
+        "leaf" => &probes[..1],
+        "all" => &probes[..],
+        _ => &[],
+    };
 
     let mut times = Vec::with_capacity(samples);
     let mut allocations = 0;
@@ -355,19 +366,23 @@ fn measure(variant: Variant, count: usize, signals: usize, scenario: &str, sampl
         let before = ALLOCATIONS.load(Ordering::Relaxed);
         let start = Instant::now();
 
+        // TestAppContext draws invalidated windows when the update flushes.
         if !cx.update(|cx| change_values(scenario, &probes, cx)) {
             window
                 .update(&mut cx, |host, _, cx| host.change(scenario, count, cx))
                 .unwrap();
         }
 
-        draw(&mut cx, window);
         let elapsed = start.elapsed().as_secs_f64() * 1e6;
         let allocated = ALLOCATIONS.load(Ordering::Relaxed) - before;
+        let current_renders = window.read_with(&cx, |host, _| host.renders).unwrap();
 
-        if matches!(scenario, "leaf" | "all") {
+        assert_eq!(current_renders, renders + 1, "expected one draw per update");
+        renders = current_renders;
+
+        for probe in updated_rows {
             assert_eq!(
-                probes[0].rendered.get(),
+                probe.rendered.get(),
                 (iteration + 1) as i32,
                 "updated row must render its current value"
             );

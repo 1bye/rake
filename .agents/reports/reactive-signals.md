@@ -447,3 +447,37 @@ The compact element removes two allocations per row per frame and lowers p50
 CPU time 16.0% from the previous revision. It still spends about 30% more CPU
 time than plain cached GPUI at this size. The wall-clock samples varied under
 concurrent load. The performance acceptance gate remains open.
+
+### Bulk updates with one draw per sample
+
+GPUI's `TestAppContext` draws invalidated windows when the application update
+flushes. The ordinary headless benchmark also requested a draw explicitly, so
+earlier timings for those cases include two draws per sample. The benchmark
+now measures the automatic draw, asserts one host render per update, and
+checks the rendered value of every updated row.
+
+These results use the runtime at `c593e789` and the corrected benchmark on an
+Apple M1 Max with macOS 26.6.2, Rust 1.98.0, and gpui-pre 0.3.11. Three
+interleaved optimized runs updated all 10,000 rows in one application update.
+Each run measured process CPU time for 31 samples after five warmups. The table
+reports the median of each run's percentiles. All value and teardown assertions
+passed.
+
+| Implementation | p50 CPU time | p95 CPU time | Allocations per update |
+| --- | ---: | ---: | ---: |
+| Plain GPUI, uncached | 56.4 ms | 58.6 ms | 130,052 |
+| Rake function components, uncached | 73.8 ms | 81.2 ms | 140,052 |
+| Plain GPUI, cached | 371.2 ms | 396.2 ms | 130,050 |
+| Rake function components, cached | 561.9 ms | 580.5 ms | 150,050 |
+
+The cached profile spent most of the sample in GPUI's
+`App::detect_accessed_entities` during prepaint. Each cache miss snapshots and
+compares the set of entities accessed so far in the frame. Signal reads add
+entities to that set. Batching the writes already produces one draw and still
+leaves every changed row with a cache miss.
+
+The existing `cached = false` option lowered Rake's bulk p50 by 87%. A spot
+check of a single-row update took 28.0 ms with caching and 61.4 ms without it.
+Disabling caching suits rows that normally all change together. The matched
+uncached Rake and GPUI cases still differ by 31% at p50, so the approximately
+10% target remains open. The measurements cover headless CPU work.
