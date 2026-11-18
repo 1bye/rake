@@ -4,10 +4,11 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use crate::gpui::{
-    AnyElement, AnyEntity, App, AsyncApp, Context, EntityId, Global, IntoElement, Render,
-    RenderOnce, Task, ViewElement, Window,
+    AnyElement, AnyEntity, App, AsyncApp, Context, EntityId, Global, IntoElement, Render, Task,
+    Window,
 };
 
+use super::element::Stretched;
 use super::signal::{Key, Signal};
 
 struct Registration {
@@ -304,7 +305,7 @@ impl<P: 'static, F: 'static, U: Fn(&P, &mut App) + 'static> ComponentView<P, F, 
     }
 }
 
-impl<P: crate::gpui::RenderOnce, F, U: 'static> Render for ComponentView<P, F, U>
+impl<P: StretchComponent, F, U: 'static> Render for ComponentView<P, F, U>
 where
     F: FnMut(&P, &mut Window, &mut App, bool) -> AnyElement + 'static,
 {
@@ -336,14 +337,14 @@ pub(super) trait ReactiveView: 'static {
     fn inspect(&self, cx: &mut App);
 }
 
-impl<P: crate::gpui::RenderOnce, F: 'static, U: 'static> ReactiveView for ComponentView<P, F, U> {
+impl<P: StretchComponent, F: 'static, U: 'static> ReactiveView for ComponentView<P, F, U> {
     #[cfg(feature = "devtools")]
     fn inspect(&self, cx: &mut App) {
         let (signals, truncated) = super::inspection::capture(&self.owner.inspection, cx);
 
         crate::inspection::component_signals(
             cx,
-            std::any::type_name::<crate::gpui::ViewElement<P>>(),
+            std::any::type_name::<<Stretched<P> as IntoElement>::Element>(),
             signals,
             truncated,
         );
@@ -366,20 +367,11 @@ impl<T: IntoElement> ConstrainComponent for &mut ComponentChild<T> {
 
 impl<T: StretchComponent> ConstrainComponent for ComponentChild<T> {
     fn constrain(&mut self) -> AnyElement {
-        ViewElement::new(Stretched(self.0.take().unwrap(), true)).into_any_element()
+        Stretched::new(self.0.take().unwrap(), true).into_any_element()
     }
 }
 
 #[doc(hidden)]
 pub trait StretchComponent: 'static {
     fn render_stretched(self, window: &mut Window, cx: &mut App, stretched: bool) -> AnyElement;
-}
-
-#[doc(hidden)]
-pub struct Stretched<T>(pub T, pub bool);
-
-impl<T: StretchComponent> RenderOnce for Stretched<T> {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        self.0.render_stretched(window, cx, self.1)
-    }
 }

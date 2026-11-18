@@ -150,7 +150,7 @@ impl<C: crate::reactive::StretchComponent> crate::reactive::ConstrainComponent
         let key = (component.key)(&component.inner);
 
         inspect_component(
-            gpui::ViewElement::new(crate::reactive::Stretched(component.inner, true)),
+            crate::reactive::Stretched::new(component.inner, true),
             component.definition,
             key,
         )

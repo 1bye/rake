@@ -17,12 +17,11 @@ mod inspection;
 pub use attrs::Attrs;
 pub use children::Children;
 
-pub use component::{
-    ComponentChild, ComponentView, ConstrainComponent, Setup, StretchComponent, Stretched,
-};
+pub use component::{ComponentChild, ComponentView, ConstrainComponent, Setup, StretchComponent};
 
 pub use context::SignalContext;
 pub use effect::ReactiveApp;
+pub use element::Stretched;
 pub use event::Event;
 pub use global::provide_global;
 pub use memo::Memo;

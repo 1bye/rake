@@ -448,11 +448,11 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         derive_props
     };
 
-    let (body, render_type, render_value, stretch_impl) = if stateful {
+    let (body, element_type, element, stretch_impl) = if stateful {
         (
             quote!(#rake::reactive::StretchComponent::render_stretched(self, window, cx, false)),
-            quote!(#rake::reactive::Stretched<Self>),
-            quote!(#rake::reactive::Stretched(self, false)),
+            quote!(<#rake::reactive::Stretched<Self> as #rake::gpui::IntoElement>::Element),
+            quote!(#rake::gpui::IntoElement::into_element(#rake::reactive::Stretched::new(self, false))),
             quote!(
                 impl #impl_generics #rake::reactive::StretchComponent for #name #type_generics #where_clause {
                     #[allow(unused_variables, reason = "Generated render arguments can be unused by the authored markup.")]
@@ -463,7 +463,12 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             ),
         )
     } else {
-        (body, quote!(Self), quote!(self), TokenStream::new())
+        (
+            body,
+            quote!(#rake::gpui::ViewElement<Self>),
+            quote!(#rake::gpui::ViewElement::new(self)),
+            TokenStream::new(),
+        )
     };
 
     Ok(quote! {
@@ -484,9 +489,9 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             }
         }
         impl #impl_generics #rake::gpui::IntoElement for #name #type_generics #where_clause {
-            type Element = #rake::gpui::ViewElement<#render_type>;
+            type Element = #element_type;
             fn into_element(self) -> Self::Element {
-                #rake::gpui::ViewElement::new(#render_value)
+                #element
             }
         }
     })

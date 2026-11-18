@@ -422,3 +422,28 @@ cached case that skips rereading the unchanged signals. A separate CPU sample
 showed the keyed-state lookup in layout and both the component wrapper and
 cached entity in paint. A second cached parent run measured 33.6% p50 overhead
 with the same allocation count. Performance acceptance remains open.
+
+### Compact component element
+
+The stateful component shell uses GPUI's public element API and keeps the
+mounted entity on GPUI's existing cache path. Live-reload builds use GPUI's
+hot-patchable view wrapper. Both paths use the rendered element type when
+attaching signal metadata to the inspector.
+
+Three interleaved headless runs compared the exact PR head `f219bb0b` and the
+compact element with the same GPUI 0.3.11 pin, Rust 1.98.0, and optimized
+profile on an Apple M1 Max. Each run collected 31 samples after five warmups.
+Process CPU time isolates work from periods when the busy host descheduled the
+benchmark. The table shows the median of each run's percentiles for parent
+rerenders with 10,000 cached rows and one signal per row.
+
+| Implementation | p50 CPU time | p95 CPU time | Allocations per frame |
+| --- | ---: | ---: | ---: |
+| Plain cached GPUI | 39.4 ms | 41.6 ms | 60,088 |
+| Function components at `f219bb0b` | 60.9 ms | 65.0 ms | 100,088 |
+| Function components with compact element | 51.2 ms | 54.2 ms | 80,088 |
+
+The compact element removes two allocations per row per frame and lowers p50
+CPU time 16.0% from the previous revision. It still spends about 30% more CPU
+time than plain cached GPUI at this size. The wall-clock samples varied under
+concurrent load. The performance acceptance gate remains open.
