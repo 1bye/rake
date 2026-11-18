@@ -8,6 +8,7 @@
 mod notifications;
 mod secrets;
 mod shortcuts;
+
 pub use secrets::{Secret, Secrets};
 
 #[cfg(feature = "gpui")]
