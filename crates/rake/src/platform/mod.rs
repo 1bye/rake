@@ -6,7 +6,9 @@
 //! observation, but cannot undo an OS dialog, clipboard write or browser download.
 
 mod notifications;
+mod secrets;
 mod shortcuts;
+pub use secrets::{Secret, Secrets};
 
 #[cfg(feature = "gpui")]
 pub use shortcuts::GlobalShortcut;
@@ -39,6 +41,21 @@ pub type Request<T> = Pin<Box<dyn Future<Output = Result<T, Error>>>>;
 /// A host operation failed without silently substituting another behavior.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// No Linux Secret Service is registered on the session bus.
+    #[error("no Secret Service is available")]
+    NoSecretService,
+    /// Credential storage is absent or failed; backend messages are withheld.
+    #[error("system credential storage is unavailable")]
+    SecretsUnavailable,
+    /// Keychain disallows interaction, commonly because it is locked.
+    #[error("keychain is locked or interaction is unavailable")]
+    KeychainLocked,
+    /// Credential access was denied or cancelled.
+    #[error("credential access denied")]
+    SecretAccessDenied,
+    /// Windows Credential Manager accepts at most 2560 bytes.
+    #[error("secret exceeds the Windows 2560-byte limit")]
+    SecretSizeLimit,
     /// No implementation exists in the current host.
     #[error("{0} is unsupported by this host")]
     Unsupported(&'static str),

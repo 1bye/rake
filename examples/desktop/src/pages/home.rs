@@ -9,6 +9,7 @@ pub(crate) struct Home {
     welcome: String,
     edits: u32,
     error: Option<String>,
+    token: Option<AsyncAction<bool, rake::platform::Error>>,
     copy: Option<AsyncAction<(), rake::platform::Error>>,
 }
 
@@ -36,6 +37,7 @@ impl LoadedPage<Destination> for Home {
             edits: 0,
             error: None,
             copy: None,
+            token: None,
         }))
     }
 }
@@ -61,6 +63,72 @@ impl Render for Home {
         rake::view! {
             <section class="gap-3">
                 <p>{self.welcome.clone()}</p>
+                <button
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let result =
+                                this.page.services().platform().secrets("dev.rake.starter");
+                            if let Ok(secrets) = result {
+                                let request = secrets.write(
+                                    "demo-token",
+                                    rake::platform::Secret::new(b"example-token".to_vec()),
+                                    cx
+                                );
+                                this.token = Some(
+                                    this.page
+                                        .action(cx, async move { request.await.map(|()| true) })
+                                );
+                            }
+                        })
+                    }
+                >
+                    "Store demo token"
+                </button>
+                <button
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            if let Ok(secrets) =
+                                this.page.services().platform().secrets("dev.rake.starter")
+                            {
+                                let request = secrets.read("demo-token", cx);
+                                this.token = Some(this.page.action(cx, async move {
+                                    request.await.map(|value| value.is_some())
+                                }));
+                            }
+                        })
+                    }
+                >
+                    "Check saved token"
+                </button>
+                <button
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            if let Ok(secrets) =
+                                this.page.services().platform().secrets("dev.rake.starter")
+                            {
+                                let request = secrets.delete("demo-token", cx);
+                                this.token = Some(
+                                    this.page
+                                        .action(cx, async move { request.await.map(|()| false) })
+                                );
+                            }
+                        })
+                    }
+                >
+                    "Delete demo token"
+                </button>
+                if let Some(token) = &self.token {
+                    <p>
+                        {
+                            match token.state(cx) {
+                                LoadStatus::Ready(true) => "Demo token is stored".to_owned(),
+                                LoadStatus::Ready(false) => "Demo token is absent".to_owned(),
+                                LoadStatus::Failed(error) => error.to_string(),
+                                _ => "Checking keychain…".to_owned(),
+                            }
+                        }
+                    </p>
+                }
                 <button
                     disabled={
                         !self
