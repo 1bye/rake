@@ -28,7 +28,7 @@ struct Driver {
     policy: WindowState,
     signals: Rc<Signals>,
     windows: HashMap<gpui::WindowId, (String, Entity<Observer>, gpui::AnyWindowHandle)>,
-    _worker: gpui::Task<()>,
+    _worker: Option<gpui::Task<()>>,
     _closed: Subscription,
     _quit: Subscription,
 }
@@ -228,21 +228,27 @@ pub(crate) fn install(policy: WindowState, cx: &mut gpui::App) {
             });
         }
 
-        let driver = cx.global::<Driver>();
+        let driver = cx.global_mut::<Driver>();
 
         driver.signals.stopping.set(true);
         driver.signals.changed.notify(usize::MAX);
         driver.signals.final_save.notify(usize::MAX);
         let policy = driver.policy.clone();
 
-        async move { policy.save().await }
+        driver._worker.take();
+
+        // GPUI cancels returned quit futures after 200 ms. Drain serialized disk
+        // writes here so a slow blocking pool or fsync cannot lose the final bounds.
+        cx.foreground_executor().block_on(policy.save());
+
+        async {}
     });
 
     cx.set_global(Driver {
         policy,
         signals,
         windows: HashMap::new(),
-        _worker: worker,
+        _worker: Some(worker),
         _closed: closed,
         _quit: quit,
     });

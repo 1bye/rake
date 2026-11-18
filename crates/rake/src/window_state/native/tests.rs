@@ -167,10 +167,20 @@ fn fullscreen_keeps_normal_bounds_and_quit_flushes_before_debounce() {
             .expect("fullscreen test window")
     });
     app.simulate_window_resize(window, gpui::size(gpui::px(1920.), gpui::px(1080.)));
-    // Preferences use a real blocking pool; retain the wall-clock quit deadline
-    // without the test scheduler's randomized early poll cutoff.
-    app.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
+    // Hold the write serialization gate longer than GPUI's quit deadline, as a
+    // slow in-flight fsync can. Quit must drain it and still save the final bounds.
+    let write = app
+        .foreground_executor()
+        .block_test(policy.inner.writes.clone().lock_owned());
+    let slow_write = std::thread::spawn(move || {
+        let _write = write;
+
+        std::thread::sleep(gpui::SHUTDOWN_TIMEOUT * 2);
+    });
     app.quit();
+    slow_write
+        .join()
+        .expect("slow write completed before quit returned");
     let data = std::fs::read_to_string(directory.path().join(super::super::PREFERENCE_KEY))
         .expect("quit awaits final preference write");
 

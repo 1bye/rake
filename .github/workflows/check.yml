@@ -172,9 +172,12 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cargo test -p rake-app-cli --bin rake project_build:: --locked
+      - name: Build global shortcut probe (X11)
+        if: runner.os == 'Linux'
+        run: cargo build -p rake-shortcuts --example shortcut-probe --locked
       - name: Global shortcut lifecycle (X11)
         if: runner.os == 'Linux'
-        run: xvfb-run -a env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 cargo run -p rake-shortcuts --example shortcut-probe --locked
+        run: xvfb-run -a env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 target/debug/examples/shortcut-probe
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes

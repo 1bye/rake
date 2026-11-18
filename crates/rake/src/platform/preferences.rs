@@ -91,25 +91,29 @@ impl Preferences {
 
         #[cfg(not(target_family = "wasm"))]
         {
-            let root = self.root.clone();
-            let path = root.join(key);
+            let preferences = self.clone();
+            let key = key.to_owned();
             let value = value.to_owned();
 
-            blocking::unblock(move || {
-                use std::io::Write;
-                std::fs::create_dir_all(&root)?;
-                let mut temporary = tempfile::NamedTempFile::new_in(&root)?;
-
-                temporary.write_all(value.as_bytes())?;
-                temporary.as_file().sync_all()?;
-                temporary
-                    .persist(path)
-                    .map_err(|error| Error::Io(error.error))?;
-
-                Ok(())
-            })
-            .await
+            blocking::unblock(move || preferences.set_blocking(&key, &value)).await
         }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn set_blocking(&self, key: &str, value: &str) -> Result<(), Error> {
+        use std::io::Write;
+
+        name(key)?;
+        std::fs::create_dir_all(&self.root)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
+
+        temporary.write_all(value.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(self.root.join(key))
+            .map_err(|error| Error::Io(error.error))?;
+
+        Ok(())
     }
 
     /// Removes one preference; removing a missing value succeeds.
