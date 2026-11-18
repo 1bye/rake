@@ -38,7 +38,7 @@ fn main() {
         };
         cx.spawn(async move |cx| {
             let result = request.await;
-            cx.update(|cx| cx.quit()).unwrap();
+            cx.update(|cx| cx.quit());
             if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);

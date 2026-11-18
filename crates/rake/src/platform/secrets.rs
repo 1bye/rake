@@ -224,6 +224,30 @@ mod tests {
     use super::*;
     use tracing_subscriber::prelude::*;
 
+    #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
+    #[test]
+    fn backend_error_messages_are_discarded() {
+        let error = native_error(anyhow::anyhow!("DO-NOT-EXPOSE-backend-token"));
+        assert!(!format!("{error:?}: {error}").contains("DO-NOT-EXPOSE"));
+    }
+
+    #[cfg(all(feature = "gpui", target_os = "macos"))]
+    #[test]
+    fn keychain_statuses_remain_typed() {
+        use gpui_pre_apple::keychain::{KeychainError, KeychainOperation};
+        let error = |status| {
+            anyhow::Error::new(KeychainError::Security {
+                operation: KeychainOperation::Read,
+                status,
+            })
+        };
+        assert!(matches!(native_error(error(-25308)), Error::KeychainLocked));
+        assert!(matches!(
+            native_error(error(-25293)),
+            Error::SecretAccessDenied
+        ));
+    }
+
     #[test]
     fn names_do_not_collide() {
         let platform = Platform::default();

@@ -21,7 +21,7 @@ launch-at-login = ["dep:rake-autostart"]
 tray = ["gpui", "dep:rake-tray", "global-shortcuts"]
 global-shortcuts = ["gpui", "dep:rake-shortcuts"]
 gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
-gpui-fast = ["gpui", "dep:gpui-fast-apple", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
+gpui-fast = ["gpui", "dep:gpui_fast_apple", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
 live = ["gpui", "dep:blaze-live", "dep:pathfinder_simd"]
 native-components = ["gpui", "dep:rake-native"]
 native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
@@ -35,7 +35,7 @@ kit = ["gpui", "rake-ui/kit"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support"]
-gpui = ["dep:gpui-pre-apple", "dep:windows", "dep:oo7", "dep:zbus", "dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+gpui = ["dep:gpui_pre_apple", "dep:windows", "dep:oo7", "dep:zbus", "dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 zeroize = "1"
@@ -93,8 +93,8 @@ console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui-fast-apple = { version = "=0.1.13", optional = true }
-gpui-pre-apple = { version = "=0.3.11", optional = true }
+gpui_fast_apple = { package = "gpui-fast-apple", version = "=0.1.13", optional = true }
+gpui_pre_apple = { package = "gpui-pre-apple", version = "=0.3.11", optional = true }
 block2 = { version = "0.6", optional = true }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"], optional = true }
 
