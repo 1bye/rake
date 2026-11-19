@@ -76,6 +76,8 @@ pub mod inspection;
 pub mod loading;
 #[cfg(feature = "gpui")]
 pub mod menus;
+#[cfg(all(feature = "motion", not(feature = "gpui-fast")))]
+pub mod motion;
 pub mod platform;
 pub mod quit;
 pub mod reload;

@@ -244,6 +244,9 @@ jobs:
         run: >-
           cargo test -p rake-app --features view-test-support,devtools
           --lib --test view_state --test element_inspection --locked --no-fail-fast
+      - name: Motion tests
+        if: ${{ !cancelled() }}
+        run: cargo test -p rake-app --features motion,view-test-support --test motion --locked --no-fail-fast
       - name: Desktop feature lints
         if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: >-
@@ -407,6 +410,9 @@ jobs:
         run: >-
           cargo test -p rake-app --features view-test-support,devtools
           --lib --test view_state --test element_inspection --locked --no-fail-fast
+      - name: Motion tests
+        if: ${{ !cancelled() }}
+        run: cargo test -p rake-app --features motion,view-test-support --test motion --locked --no-fail-fast
       - name: Estimate dependency cache size
         if: ${{ always() }}
         run: python scripts/cache-budget.py ${{ runner.os == 'Windows' && '--targets' || '' }}

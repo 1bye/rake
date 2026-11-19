@@ -32,6 +32,8 @@ updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["gpui_pre?/profiler", "gpui_fast?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
 devtools-memory = ["devtools", "dep:backtrace"]
 kit = ["gpui", "rake-ui/kit"]
+# Requires an application-level patch of gpui-pre; see docs/motion.md.
+motion = ["gpui"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support"]
@@ -112,6 +114,10 @@ trybuild = "1"
 [[test]]
 name = "view_state"
 required-features = ["view-test-support"]
+
+[[test]]
+name = "motion"
+required-features = ["motion", "view-test-support"]
 
 [[bench]]
 name = "control_queries"
