@@ -67,6 +67,7 @@ fn tree(capture: &str, id: &str) -> Snapshot {
         status: Status::Captured,
         capture: capture.into(),
         router_revision: 1,
+        locale: None,
         elements: vec![element(id)],
         omitted: 0,
         coverage: "boundaries".into(),

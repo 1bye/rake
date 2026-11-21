@@ -17,6 +17,9 @@ path = "src/main.rs"
 workspace = true
 
 [features]
+i18n = ["rake/locale"]
+i18n-icu = ["i18n", "rake/locale-icu"]
+kit = ["i18n", "rake/kit"]
 devtools = ["rake/devtools"]
 view-test-support = ["rake/view-test-support"]
 

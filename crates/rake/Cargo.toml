@@ -32,12 +32,24 @@ updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["gpui_pre?/profiler", "gpui_fast?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
 devtools-memory = ["devtools", "dep:backtrace"]
 kit = ["gpui", "rake-ui/kit"]
+locale = ["gpui", "dep:fluent-bundle", "dep:icu_locale_core", "dep:sys-locale"]
+locale-icu = ["locale", "dep:fixed_decimal", "dep:icu_calendar", "dep:icu_datetime", "dep:icu_decimal", "dep:icu_plurals", "dep:icu_provider", "dep:icu_provider_blob", "dep:writeable"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support"]
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
+fluent-bundle = { version = "0.16", optional = true }
+icu_locale_core = { version = "2.4", optional = true }
+fixed_decimal = { version = "0.7", optional = true }
+icu_calendar = { version = "2.4", default-features = false, optional = true }
+icu_datetime = { version = "2.4", default-features = false, features = ["serde"], optional = true }
+icu_decimal = { version = "2.4", default-features = false, features = ["serde"], optional = true }
+icu_plurals = { version = "2.4", default-features = false, features = ["serde"], optional = true }
+icu_provider = { version = "2.4", features = ["sync"], optional = true }
+icu_provider_blob = { version = "2.4", optional = true }
+writeable = { version = "0.6", optional = true }
 rake-shortcuts = { version = "=0.1.0-alpha.4", path = "../rake-shortcuts", optional = true }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
@@ -73,6 +85,7 @@ backtrace = { version = "0.3.76", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 blaze-live = { package = "rake-blaze-live", version = "=0.1.0-alpha.4", path = "../../vendor/blaze-live", optional = true }
+sys-locale = { version = "0.3", optional = true }
 anyhow = "1"
 libc = "0.2"
 async-io = "2.6"
@@ -85,7 +98,7 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
+web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Navigator", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = { version = "0.6", optional = true }

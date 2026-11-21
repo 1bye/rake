@@ -57,6 +57,7 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
     Inspected {
         inner: element.into_element(),
         semantic_id: None,
+        message_key: None,
         source: Location::caller(),
         style: None,
         root: None,
@@ -82,6 +83,7 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
 pub struct Inspected<E: gpui::Element> {
     inner: E,
     semantic_id: Option<String>,
+    message_key: Option<&'static str>,
     source: &'static Location<'static>,
     style: Option<gpui::StyleRefinement>,
     root: Option<(Store, u64, WindowId)>,
@@ -184,6 +186,13 @@ impl<E: gpui::Element> Inspected<E> {
     /// Renames this boundary without inserting a duplicate inspection wrapper.
     pub fn inspect(mut self, semantic_id: impl Into<String>) -> Self {
         self.semantic_id = Some(semantic_id.into());
+        self
+    }
+
+    /// Stores a Fluent identifier at this inspection boundary.
+    #[doc(hidden)]
+    pub fn message_key(mut self, key: &'static str) -> Self {
+        self.message_key = Some(key);
         self
     }
 
@@ -608,6 +617,11 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
         let previous = self.root.as_ref().map(|(store, revision, _)| {
             let snapshot = store.begin(*revision);
+            #[cfg(feature = "locale")]
+            let snapshot = Snapshot {
+                locale: crate::locale::current(cx).map(ToString::to_string),
+                ..snapshot
+            };
 
             cx.global_mut::<ActiveCapture>().0.replace(Capture {
                 snapshot,
@@ -635,14 +649,25 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         let mut retained_index = None;
         let mut a11y_truncated = false;
         let a11y = cx.global::<ActiveCapture>().0.is_some().then(|| {
-            accessibility::capture(
+            let (mut metadata, text) = accessibility::capture(
                 &self.inner,
                 self.focus.as_ref(),
                 state.1.as_ref(),
                 window,
                 cx,
                 &mut a11y_truncated,
-            )
+            );
+            let key = self.message_key;
+            #[cfg(feature = "locale")]
+            let key = key.or_else(|| {
+                (&self.inner as &dyn std::any::Any)
+                    .downcast_ref::<crate::locale::LocalizedElement>()
+                    .map(|element| element.key)
+            });
+
+            metadata.message_key = key.map(|key| limited(key, 256, &mut a11y_truncated));
+
+            (metadata, text)
         });
 
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {

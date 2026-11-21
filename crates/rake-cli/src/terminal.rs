@@ -22,7 +22,7 @@ rake highlight ID|none [--generation CAPTURE] [--instance UUID|application-id]
 rake inspect pick [--instance UUID|application-id]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
-  inspect tree | inspect element ELEMENT_ID | inspect pick | inspect mode on|off [--lease-ms MS]
+  inspect tree | inspect message-key KEY [--role ROLE] [--window WINDOW] | inspect element ELEMENT_ID | inspect pick | inspect mode on|off [--lease-ms MS]
   inspect focus|scroll ELEMENT_ID [--generation CAPTURE] | inspect source ELEMENT_ID [--style INDEX|--handler INDEX]
   info | schema | snapshot | events [--follow]
   quit [--jobs wait|cancel] | quit status
@@ -544,6 +544,24 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         args[1] = "element".into();
     }
 
+    let message_key = if args.first().is_some_and(|arg| arg == "inspect")
+        && args.get(1).is_some_and(|arg| arg == "message-key")
+    {
+        let role = option(&mut args, "--role")?;
+        let window = option(&mut args, "--window")?
+            .map(|window| window.parse())
+            .transpose()?;
+
+        if args.len() != 3 {
+            return Err("inspect message-key requires one Fluent message identifier".into());
+        }
+
+        args[1] = "tree".into();
+        Some((args.remove(2), role, window))
+    } else {
+        None
+    };
+
     let (mut message, follow) = parse_message(args)?;
 
     let candidates: Vec<_> = instances
@@ -563,6 +581,76 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         [instance] => *instance,
         _ => return Err("ambiguous instance; select a RuntimeId using --instance".into()),
     };
+
+    if let Some((key, role, window)) = message_key {
+        let mut offset = 0;
+        let mut pin = None;
+        let mut result: Option<rake_protocol::inspection::Snapshot> = None;
+
+        loop {
+            let page = if let Some(window) = window {
+                let Reply::InspectionWindow(page) = query(
+                    instance,
+                    Query::InspectWindow {
+                        window,
+                        presentation: pin.take(),
+                        offset,
+                    },
+                    timeout,
+                )?
+                else {
+                    return Err("unexpected window inspection reply".into());
+                };
+
+                pin = Some(page.presentation);
+                page.page
+            } else {
+                let Reply::ElementPage(page) = query(
+                    instance,
+                    Query::InspectTreePage {
+                        generation: pin.take(),
+                        offset,
+                    },
+                    timeout,
+                )?
+                else {
+                    return Err("unexpected tree inspection reply".into());
+                };
+
+                pin = Some(page.snapshot.capture.clone());
+                page
+            };
+            let mut tree = page.snapshot;
+
+            tree.elements.retain(|element| {
+                element.accessibility.as_ref().is_some_and(|accessibility| {
+                    accessibility.message_key.as_deref() == Some(key.as_str())
+                        && role.as_ref().is_none_or(|role| {
+                            accessibility
+                                .role
+                                .as_ref()
+                                .is_some_and(|value| value.eq_ignore_ascii_case(role))
+                        })
+                })
+            });
+
+            match &mut result {
+                Some(result) => result.elements.extend(tree.elements),
+                None => result = Some(tree),
+            }
+
+            match page.next {
+                Some(next) if next > offset => offset = next,
+                Some(_) => return Err("inspection pagination did not advance".into()),
+                None => {
+                    return print(
+                        &Reply::Elements(result.ok_or("missing inspection page")?),
+                        compact,
+                    );
+                }
+            }
+        }
+    }
 
     if let Message::Command(Command::HighlightElement {
         id: Some(id),
