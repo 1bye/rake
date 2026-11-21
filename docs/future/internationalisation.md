@@ -85,11 +85,13 @@ At startup prefer an app override, otherwise desktop `sys_locale::get_locales()`
 or Web `navigator.languages`, then the app default. Normalize and validate BCP 47
 input, negotiate in preference order against registered locales, trying exact
 then registered language parent. Never load arbitrary paths from a locale tag.
-Keep app persistence outside the core. Explicit unsupported overrides return an
-error without changing the current selection; unsupported system preferences
-fall back. A setter updates the resolved locale, Kit adapter and global, then
-refreshes all windows, including custom windows. Render-time translations must
-read the new value; long-lived cached strings must be recomputed by observers.
+Keep app persistence outside the core. Explicit overrides negotiate like system
+preferences: an unsupported tag falls back to the closest registered locale and
+logs a warning. Only malformed tags, or tags with no registered match, return an
+error without changing the current selection. A setter updates the resolved
+locale, Kit adapter and global, then refreshes all windows, including custom
+windows. Render-time translations must read the new value; long-lived cached
+strings must be recomputed by observers.
 Web `languagechange` can re-detect in System mode; native automatic OS-change
 watching is deferred, with an explicit re-detect operation available.
 
@@ -175,10 +177,11 @@ baseline; Fluent only; Fluent plus filtered ICU4X; then an Intl formatting varia
 Record raw wasm, compressed wasm and JS, locale/provider bytes, cold load,
 first-format latency, and locale-switch render latency. Vary shipped locale sets
 and report exact inputs and commands. Count duplicate plural/locale machinery.
-No size budget has been agreed. If filtered ICU4X exceeds the user-approved
-budget, propose browser Intl for Web formatting/plurals with explicit output,
-rounding, calendar and locale-data-version differences. Reject choosing that
-fallback before measuring; reject shipping all locales by default.
+The provisional budget is about 300 KB of extra compressed payload (see Review
+decisions). If filtered ICU4X exceeds the agreed budget, propose browser Intl
+for Web formatting/plurals with explicit output, rounding, calendar and
+locale-data-version differences. Reject choosing that fallback before
+measuring; reject shipping all locales by default.
 
 ## 6. Direction and bidi
 
@@ -251,25 +254,33 @@ failures and any Fluent/ICU integration compromise before committing to the API.
 No prototype, compilation, runtime verification or size measurement was done for
 this document.
 
-## Open questions for review
+## Review decisions (2026-11-21)
 
-- Which locales and compressed Web size budget should the prototype use?
-- Is explicit `cx` in `t!` acceptable, and are Fluent hyphenated message IDs acceptable?
-- Should unsupported explicit locales error as proposed, or negotiate like System?
-- Is date-only formatting sufficient initially; which timestamp/time-zone contract follows?
-- Is Kit's process-global limitation acceptable, and should Kit translation gaps block release?
+- **Locales and Web size:** the prototype ships English and Portuguese. Measure
+  the size matrix first; the provisional budget is about 300 KB of extra
+  compressed Web payload, revisited once real numbers exist.
+- **`t!` shape:** explicit `cx` is accepted, and so are Fluent's hyphenated
+  message IDs. No dotted-key rewriting.
+- **Unsupported explicit locales:** negotiate like System, falling back to the
+  closest registered locale with a warning. Error only when nothing matches.
+- **Dates and times:** date-only formatting first. Timestamps follow, always
+  with an explicit zone, plus a helper that supplies the system zone. Never
+  infer a zone silently.
+- **Kit:** the process-global locale is accepted, since Kit is optional and
+  Rake owns the locale. Missing Kit translations fall back to English, are
+  tracked in an issue and do not block a release.
 
-## Proposed follow-up issues (not filed)
+## Follow-up issues
 
 | Title | Scope | Done when |
 | --- | --- | --- |
-| Locale core and window updates | Rake global, detection, negotiation, overrides, custom windows | Invalid-input/fallback tests pass; all existing and new windows follow changes on desktop and Web |
-| Fluent messages and explicit t! | Catalogue validation, argument errors, LocalizedText, view expression coverage | Example translates explicitly; literals stay literal; missing-message behavior tested |
-| ICU formatting and filtered Web data | Dates, numbers, plural integration, provider generation | Native/Web output cases and reproducible size matrix reviewed against agreed budget |
-| Logical start/end classes | Spacing, inset and alignment; preserve physical utilities | Both directions resolve correctly with macro/lint coverage; no mirrored-layout claim |
-| Inspection message keys | Protocol, capture, label metadata, CDP selectors, ctl query | Same key finds translated controls in both paths; ambiguity, revisions and privacy tested |
-| Kit locale adapter | Optional one-way setter bridge, supported-locale mapping, cache audit | Existing Kit controls update after repeated switches; no-Kit build remains independent |
-| RTL layout and editing | GPUI direction plumbing and platform bidi audit | Mirrored boxes, mixed text, caret/selection, focus and a11y order verified across native/Web |
+| #100 Locale core and window updates | Rake global, detection, negotiation, overrides, custom windows | Invalid-input/fallback tests pass; all existing and new windows follow changes on desktop and Web |
+| #101 Fluent messages and explicit t! | Catalogue validation, argument errors, LocalizedText, view expression coverage | Example translates explicitly; literals stay literal; missing-message behavior tested |
+| #102 ICU formatting and filtered Web data | Dates, numbers, plural integration, provider generation | Native/Web output cases and reproducible size matrix reviewed against agreed budget |
+| #103 Logical start/end classes | Spacing, inset and alignment; preserve physical utilities | Both directions resolve correctly with macro/lint coverage; no mirrored-layout claim |
+| #104 Inspection message keys | Protocol, capture, label metadata, CDP selectors, ctl query | Same key finds translated controls in both paths; ambiguity, revisions and privacy tested |
+| #105 Kit locale adapter | Optional one-way setter bridge, supported-locale mapping, cache audit | Existing Kit controls update after repeated switches; no-Kit build remains independent |
+| #106 RTL layout and editing | GPUI direction plumbing and platform bidi audit | Mirrored boxes, mixed text, caret/selection, focus and a11y order verified across native/Web |
 
-The prototype is the next separate task; create these issues only after user
-review. #21 stays open until its broader done-when is met.
+Filed after review on 2026-11-21. The prototype is the next separate task.
+#21 stays open until its broader done-when is met.
