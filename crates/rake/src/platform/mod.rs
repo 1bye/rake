@@ -6,7 +6,10 @@
 //! observation, but cannot undo an OS dialog, clipboard write or browser download.
 
 mod notifications;
+mod secrets;
 mod shortcuts;
+
+pub use secrets::{Secret, Secrets};
 
 #[cfg(feature = "gpui")]
 pub use shortcuts::GlobalShortcut;
@@ -39,6 +42,24 @@ pub type Request<T> = Pin<Box<dyn Future<Output = Result<T, Error>>>>;
 /// A host operation failed without silently substituting another behavior.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// No application id was configured for the credential namespace.
+    #[error("secrets require an application id configured through App::new")]
+    MissingApplicationId,
+    /// No Linux Secret Service is registered on the session bus.
+    #[error("no Secret Service is available")]
+    NoSecretService,
+    /// Credential storage is absent or failed; backend messages are withheld.
+    #[error("system credential storage is unavailable")]
+    SecretsUnavailable,
+    /// Keychain disallows interaction, commonly because it is locked.
+    #[error("keychain is locked or interaction is unavailable")]
+    KeychainLocked,
+    /// Credential access was denied or cancelled.
+    #[error("credential access denied")]
+    SecretAccessDenied,
+    /// Windows Credential Manager accepts at most 2560 bytes.
+    #[error("secret exceeds the Windows 2560-byte limit")]
+    SecretSizeLimit,
     /// No implementation exists in the current host.
     #[error("{0} is unsupported by this host")]
     Unsupported(&'static str),
@@ -126,6 +147,7 @@ struct Activations {
 /// Shared application host services and a bounded URL activation inbox.
 #[derive(Clone, Default)]
 pub struct Platform {
+    application_id: Option<Rc<str>>,
     activations: Rc<Activations>,
     shortcuts: GlobalShortcuts,
     #[cfg(any(feature = "gpui", test))]
@@ -139,6 +161,14 @@ impl std::fmt::Debug for Platform {
 }
 
 impl Platform {
+    #[cfg(any(feature = "gpui", test))]
+    pub(crate) fn for_application(application_id: &str) -> Self {
+        Self {
+            application_id: Some(application_id.into()),
+            ..Self::default()
+        }
+    }
+
     /// Detects current host availability without prompting for permission.
     pub fn capabilities(&self) -> Capabilities {
         #[cfg(target_family = "wasm")]
