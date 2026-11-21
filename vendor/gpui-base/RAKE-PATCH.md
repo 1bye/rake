@@ -16,3 +16,5 @@ Remove the Cargo patch once the pinned upstream release supports these behaviors
 Root copy preserves selected leading/trailing whitespace instead of trimming the visible text.
 
 Web also binds Command-C alongside Control-C, since the Wasm target’s OS is not the browser host OS.
+
+The workspace dependency also names this directory directly so external path and Git consumers retain the selection APIs; Cargo does not inherit dependency-root patches.

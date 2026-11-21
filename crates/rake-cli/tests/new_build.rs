@@ -43,6 +43,14 @@ fn generated_app_builds_natively_and_for_the_browser() {
         toml::from_str(&std::fs::read_to_string(project.join("Cargo.lock")).unwrap()).unwrap();
     let packages = lock["package"].as_array().unwrap();
 
+    assert!(
+        packages
+            .iter()
+            .any(|package| package["name"].as_str() == Some("gpui-base")
+                && package.get("source").is_none()),
+        "external apps must retain Rake's patched selection runtime"
+    );
+
     for name in ["rake-blaze-live", "gpui-fast", "hdrhistogram"] {
         assert!(
             packages
@@ -60,9 +68,11 @@ fn generated_app_builds_natively_and_for_the_browser() {
     );
 
     for arguments in [
-        vec!["build", "--locked"],
+        vec!["build", "-p", "consumer-app", "--locked"],
         vec![
             "build",
+            "-p",
+            "consumer-app",
             "--lib",
             "--target",
             "wasm32-unknown-unknown",
