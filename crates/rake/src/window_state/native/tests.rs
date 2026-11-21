@@ -177,6 +177,8 @@ fn fullscreen_keeps_normal_bounds_and_quit_flushes_before_debounce() {
 
         std::thread::sleep(gpui::SHUTDOWN_TIMEOUT * 2);
     });
+    // Keep the real deadline without the test scheduler's randomized poll cutoff.
+    app.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
     app.quit();
     slow_write
         .join()
@@ -188,6 +190,31 @@ fn fullscreen_keeps_normal_bounds_and_quit_flushes_before_debounce() {
 
     assert_eq!(records["main"].mode, Mode::Fullscreen);
     assert_eq!(records["main"].bounds.width, 750.);
+}
+
+#[test]
+fn quit_returns_when_a_write_remains_locked_past_the_grace_period() {
+    let app = gpui::TestAppContext::single();
+    let (directory, policy) = policy();
+
+    app.executor().allow_parking();
+    app.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
+    app.update(|cx| install(policy.clone(), cx));
+    open(&app, WindowId(1));
+    let write = app
+        .foreground_executor()
+        .block_test(policy.inner.writes.clone().lock_owned());
+    let started = std::time::Instant::now();
+
+    app.quit();
+
+    assert!(started.elapsed() >= QUIT_SAVE_TIMEOUT);
+    assert!(!directory.path().join(super::super::PREFERENCE_KEY).exists());
+    assert!(
+        policy.inner.writes.try_lock().is_none(),
+        "quit returned while the write stayed locked"
+    );
+    drop(write);
 }
 
 #[test]

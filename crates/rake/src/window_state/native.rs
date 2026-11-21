@@ -13,6 +13,8 @@ use crate::router::WindowId;
 
 /// Coalesce events without postponing persistence indefinitely during a drag.
 const SAVE_INTERVAL: Duration = Duration::from_millis(250);
+// Allow slow synced writes beyond GPUI's 200 ms grace period without hanging exit.
+const QUIT_SAVE_TIMEOUT: Duration = Duration::from_secs(3);
 // Native transitions normally complete sooner; a rejected request must not freeze tracking.
 const RESTORE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -237,9 +239,15 @@ pub(crate) fn install(policy: WindowState, cx: &mut gpui::App) {
 
         driver._worker.take();
 
-        // GPUI cancels returned quit futures after 200 ms. Drain serialized disk
-        // writes here so a slow blocking pool or fsync cannot lose the final bounds.
-        cx.foreground_executor().block_on(policy.save());
+        // GPUI cancels returned quit futures after 200 ms; give disk writes a
+        // separate bounded grace period before handing control back to shutdown.
+        if cx
+            .foreground_executor()
+            .block_with_timeout(QUIT_SAVE_TIMEOUT, policy.save())
+            .is_err()
+        {
+            crate::warn!("timed out saving window placement during quit");
+        }
 
         async {}
     });
