@@ -71,9 +71,10 @@ The explicit differences are confined to each app's `backend` shim:
 - Children are owned vectors. A tiny `slot` helper supplies a stack on each
   renderer: direct expression children in a GPUI markup loop require authored
   keyed wrappers, even when the children already carry their own identities.
-- Rune adds checked switch semantics to the button itself. GPUI's erased element
-  cannot be restyled, so this prototype adds a switch-state accessibility wrapper.
-  A production component adapter should apply semantics before type erasure.
+- Both backends apply switch role and checked state to the actual button before
+  type erasure, through `finish_button`; GPUI no longer needs an accessibility
+  wrapper. GPUI's default muted and accent colors are identical, so its adapter
+  also adds a theme-ring border on hover and keyboard focus for a visible cue.
 
 **Verdict:** separate `rake-gpui::view!` / `rake-rune::view!` renderer crates over a
 shared syntax crate are viable; one shared component source compiles today.
@@ -84,7 +85,29 @@ incompatible root patch sets. Published Rake crates remain Rune-independent;
 this experiment changes none of them. This proves a renderer seam, not parity
 for Rake routing, entities, lifecycle, arbitrary utilities or component derives.
 
-![Shared components on Rune](artifacts/rake-rune-settings.png)
+The shared GPUI Settings screen has been visually checked in light and dark
+themes: Panel/SettingRow layout and text, button hover and keyboard-focus cues,
+pointer and Space activation, notifications toggling, theme toggling and workspace
+input editing. The native accessibility tree exposes one checked control (reported
+as a checkbox by macOS), not a switch wrapper containing a separate button. Rune still passes its headless
+shared-control tests and renders the same shared source.
+
+The comparison below is GPUI left, Rune right, both in their default light theme
+with notifications on and `Studio North` as the input. Each image is the native
+960 × 640 client area at 1×, cropped below the 32-point title bar without resizing
+or shadows. The previous Rune capture included window chrome; it is replaced here.
+GPUI uses its neutral semantic palette (white surface and background), larger
+bold Settings heading and subtitle, and a bordered rounded Base input. Rune uses
+a cool-gray background, contrasting white card, smaller plain heading without a
+subtitle, and a flat filled input. Those theme, typography and native-control
+differences are intentional backend defaults, not pixel-parity claims. The shared
+rows, button labels and spacing are retained; the different headers shift the
+panel vertically. GPUI's hover/focus border is more pronounced than Rune's fill.
+
+![Shared Settings: GPUI left, Rune right](artifacts/shared-settings-side-by-side.png)
+
+Individual captures: [GPUI](artifacts/gpui-shared-settings.png),
+[Rune](artifacts/rake-rune-settings.png).
 
 ## What Rune needed to replace
 

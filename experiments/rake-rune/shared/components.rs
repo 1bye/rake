@@ -1,5 +1,5 @@
 //! The same component markup is compiled by both renderer macros.
-use super::backend::{Children, Element, Handler, Signal, Theme, finish, slot, switch_semantics};
+use super::backend::{Children, Element, Handler, Signal, Theme, finish, finish_button, slot};
 use super::view;
 
 pub struct ButtonProps {
@@ -16,22 +16,29 @@ pub fn panel(theme: Theme, children: Children) -> Element {
 }
 
 pub fn button(theme: Theme, props: ButtonProps) -> Element {
+    button_with_state(theme, props, None)
+}
+
+fn button_with_state(theme: Theme, props: ButtonProps, checked: Option<bool>) -> Element {
     let _ = theme;
     let ButtonProps {
         id,
         label,
         on_click,
     } = props;
-    finish(view! {
-        <button
-            id={id}
-            aria-label={label}
-            class="flex flex-row items-center h-9 px-3 rounded-md bg-muted hover:bg-accent focus-visible:bg-accent"
-            on:click={on_click}
-        >
-            {label}
-        </button>
-    })
+    finish_button(
+        view! {
+            <button
+                id={id}
+                aria-label={label}
+                class="flex flex-row items-center h-9 px-3 rounded-md bg-muted hover:bg-accent focus-visible:bg-accent"
+                on:click={on_click}
+            >
+                {label}
+            </button>
+        },
+        checked,
+    )
 }
 
 pub fn setting_row(theme: Theme, label: &'static str, children: Children) -> Element {
@@ -46,7 +53,7 @@ pub fn setting_row(theme: Theme, label: &'static str, children: Children) -> Ele
 
 pub fn switch(theme: Theme, signal: Signal) -> Element {
     let checked = signal.checked;
-    let button = button(
+    button_with_state(
         theme,
         ButtonProps {
             id: "notifications",
@@ -57,6 +64,6 @@ pub fn switch(theme: Theme, signal: Signal) -> Element {
             },
             on_click: signal.toggle,
         },
-    );
-    switch_semantics(button, checked)
+        Some(checked),
+    )
 }

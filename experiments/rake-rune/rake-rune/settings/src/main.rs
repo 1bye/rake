@@ -14,8 +14,11 @@ mod backend {
     pub fn slot(children: Children) -> Element {
         rune::col().gap(16.).children(children)
     }
-    pub fn switch_semantics(element: Element, checked: bool) -> Element {
-        element.role("switch").checked(checked)
+    pub fn finish_button(element: Element, checked: Option<bool>) -> Element {
+        match checked {
+            Some(checked) => element.role("switch").checked(checked),
+            None => element,
+        }
     }
 }
 #[path = "../../../shared/components.rs"]
