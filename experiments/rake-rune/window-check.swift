@@ -61,6 +61,18 @@ func usage(_ pid: Int32) throws -> rusage_info_v0 {
     return result
 }
 
+func nanosecondsPerTick() throws -> Double {
+    var timebase = mach_timebase_info_data_t()
+    guard mach_timebase_info(&timebase) == KERN_SUCCESS, timebase.denom != 0 else {
+        throw Failure("could not read the Mach timebase")
+    }
+    return Double(timebase.numer) / Double(timebase.denom)
+}
+
+func cpuTicks(_ before: rusage_info_v0, _ after: rusage_info_v0) -> UInt64 {
+    (after.ri_user_time - before.ri_user_time) + (after.ri_system_time - before.ri_system_time)
+}
+
 func requireFrontmost(_ pid: Int32) throws {
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
         throw Failure("the evaluation window lost focus during the input run")
@@ -164,9 +176,9 @@ func withApp(_ binary: URL, _ log: URL, arguments: [String] = [], profile: Bool 
 
 func run() throws {
     let args = Array(CommandLine.arguments.dropFirst())
-    guard args.count == 4, ["capture", "startup-idle", "frames"].contains(args[0]),
+    guard args.count == 4, ["capture", "startup-idle", "frames", "workload"].contains(args[0]),
           ["rune", "gpui"].contains(args[1]) else {
-        throw Failure("usage: window-check capture|startup-idle|frames rune|gpui /path/to/app /path/to/output-dir")
+        throw Failure("usage: window-check capture|startup-idle|frames|workload rune|gpui /path/to/app /path/to/output-dir")
     }
 
     let mode = args[0]
@@ -176,11 +188,7 @@ func run() throws {
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
     if mode == "startup-idle" {
-        var timebase = mach_timebase_info_data_t()
-        guard mach_timebase_info(&timebase) == KERN_SUCCESS, timebase.denom != 0 else {
-            throw Failure("could not read the Mach timebase")
-        }
-        let nanosecondsPerTick = Double(timebase.numer) / Double(timebase.denom)
+        let nanosPerTick = try nanosecondsPerTick()
         for run in 1...5 {
             try withApp(binary, output.appendingPathComponent("\(stack)-idle-\(run).log")) { window, pid, start in
                 Thread.sleep(forTimeInterval: 2)
@@ -189,8 +197,7 @@ func run() throws {
                 Thread.sleep(forTimeInterval: 5)
                 let after = try usage(pid)
                 let elapsed = now() - idleStart
-                let cpu = (after.ri_user_time - before.ri_user_time) + (after.ri_system_time - before.ri_system_time)
-                let cpuPercent = Double(cpu) * nanosecondsPerTick / 1e7 / elapsed
+                let cpuPercent = Double(cpuTicks(before, after)) * nanosPerTick / 1e7 / elapsed
                 print("startup-idle,\(stack),\(run),\((window.time - start) * 1000),\(elapsed),\(cpuPercent),\(after.ri_interrupt_wkups - before.ri_interrupt_wkups),\(after.ri_phys_footprint)")
             }
         }
@@ -211,27 +218,38 @@ func run() throws {
 
     guard CGPreflightPostEventAccess() else { throw Failure("macOS Accessibility permission is required to post input events") }
 
+    let nanosPerTick = try nanosecondsPerTick()
     for run in 1...3 {
-        try withApp(binary, output.appendingPathComponent("\(stack)-frames-\(run).log"), profile: true) { initial, pid, _ in
+        try withApp(binary, output.appendingPathComponent("\(stack)-\(mode)-\(run).log"), profile: mode == "frames") { initial, pid, _ in
             Thread.sleep(forTimeInterval: 1)
             try focus(pid)
             let cursor = CGEvent(source: nil)?.location
             defer { if let cursor { CGWarpMouseCursorPosition(cursor) } }
             let window = visibleWindow(pid) ?? initial
             let motionY: CGFloat = stack == "rune" ? 255 : 282
-            let animStart = epochMs()
-            for _ in 0..<12 {
-                try click(window, pid, 266, motionY)
-                Thread.sleep(forTimeInterval: 0.100)
+            func measure(_ scenario: String, _ action: () throws -> Void) throws {
+                let before = mode == "workload" ? try usage(pid) : nil
+                let start = epochMs()
+                try action()
+                Thread.sleep(forTimeInterval: 0.5)
+                try requireFrontmost(pid)
+                let end = epochMs()
+                if let before {
+                    let cpuMs = Double(cpuTicks(before, try usage(pid))) * nanosPerTick / 1e6
+                    print("workload,\(stack),\(run),\(scenario),\(start),\(end),\(pid),\(cpuMs)")
+                } else {
+                    print("frames,\(stack),\(run),\(scenario),\(start),\(end)")
+                }
             }
-            Thread.sleep(forTimeInterval: 0.5)
-            print("frames,\(stack),\(run),animation,\(animStart),\(epochMs())")
+            try measure("animation") {
+                for _ in 0..<12 {
+                    try click(window, pid, 266, motionY)
+                    Thread.sleep(forTimeInterval: 0.100)
+                }
+            }
             try click(window, pid, 80, 122)
             Thread.sleep(forTimeInterval: 0.5)
-            let scrollStart = epochMs()
-            try scroll(window, pid)
-            Thread.sleep(forTimeInterval: 0.5)
-            print("frames,\(stack),\(run),scroll,\(scrollStart),\(epochMs())")
+            try measure("scroll") { try scroll(window, pid) }
         }
     }
 }

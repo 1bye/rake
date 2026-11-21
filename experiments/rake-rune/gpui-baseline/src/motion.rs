@@ -1,35 +1,34 @@
-use std::time::{Duration, Instant};
+use rake::gpui::{App, Hsla, IntoElement, ParentElement, Styled, Window, div, px};
+use rake::motion::{self, Spring, Target};
 
-const DURATION: Duration = Duration::from_millis(400);
+const BAR_LAYER: &str = "overview-bar";
+const COLLAPSED_WIDTH: f32 = 72.0;
+const EXPANDED_WIDTH: f32 = 312.0;
 
-#[derive(Default)]
-pub(crate) struct Motion {
-    from: f32,
-    expanded: bool,
-    started: Option<Instant>,
+fn target(expanded: bool) -> Target {
+    if expanded {
+        Target::REST
+    } else {
+        Target::offset(px(COLLAPSED_WIDTH - EXPANDED_WIDTH), px(0.0))
+    }
 }
 
-impl Motion {
-    pub(crate) fn expanded(&self) -> bool {
-        self.expanded
-    }
+pub(crate) fn initialize(window: &mut Window) {
+    motion::jump(BAR_LAYER, target(false), window);
+}
 
-    pub(crate) fn sample(&self, now: Instant) -> (f32, bool) {
-        let target = f32::from(self.expanded);
-        let Some(started) = self.started else {
-            return (target, false);
-        };
+pub(crate) fn retarget(expanded: bool, window: &mut Window, cx: &App) {
+    motion::animate(BAR_LAYER, target(expanded), Spring::SMOOTH, window, cx);
+}
 
-        let t = (now.duration_since(started).as_secs_f32() / DURATION.as_secs_f32()).min(1.0);
-        let eased = t * t * (3.0 - 2.0 * t);
-        (self.from + (target - self.from) * eased, t < 1.0)
-    }
-
-    pub(crate) fn reverse(&mut self, now: Instant) {
-        self.from = self.sample(now).0;
-        self.expanded = !self.expanded;
-        self.started = Some(now);
-    }
+pub(crate) fn bar(color: Hsla) -> impl IntoElement {
+    div()
+        .w(px(EXPANDED_WIDTH))
+        .overflow_hidden()
+        .child(motion::layer(
+            BAR_LAYER,
+            div().w_full().h_2().rounded_full().bg(color),
+        ))
 }
 
 #[cfg(test)]
@@ -37,17 +36,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reversal_starts_at_the_displayed_position_and_settles() {
-        let start = Instant::now();
-        let mut motion = Motion::default();
-        assert_eq!(motion.sample(start), (0., false));
-
-        motion.reverse(start);
-        let middle = start + DURATION / 2;
-        assert_eq!(motion.sample(middle), (0.5, true));
-
-        motion.reverse(middle);
-        assert_eq!(motion.sample(middle), (0.5, true));
-        assert_eq!(motion.sample(middle + DURATION), (0., false));
+    fn targets_preserve_the_bar_widths_inside_the_clip() {
+        assert_eq!(px(EXPANDED_WIDTH) + target(false).x(), px(72.0));
+        assert_eq!(px(EXPANDED_WIDTH) + target(true).x(), px(312.0));
     }
 }

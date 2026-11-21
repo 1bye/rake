@@ -2,13 +2,12 @@
 
 use std::cell::OnceCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 use rake::gpui::prelude::*;
 use rake::gpui::{
     self, AnyView, Bounds, Context, Entity, TitlebarOptions, Window, WindowBounds, WindowOptions,
     accesskit::{Role, Toggled},
-    div, px, size, uniform_list,
+    px, size, uniform_list,
 };
 use rake::router::{LayoutContext, MountError, PageContext, Route, RouteViews};
 use rake::theme::Semantic;
@@ -19,7 +18,6 @@ mod activity;
 mod motion;
 
 use activity::{APP_TITLE, Activity, WINDOW_HEIGHT, WINDOW_WIDTH};
-use motion::Motion;
 
 #[cfg(feature = "frame-profile")]
 mod profiling;
@@ -64,10 +62,13 @@ impl RouteViews<Destination> for Pages {
         cx: &mut gpui::App,
     ) -> Result<AnyView, MountError> {
         let page = self.mounted[*destination as usize].get_or_init(|| {
+            if *destination == Destination::Overview {
+                motion::initialize(window);
+            }
             cx.new(|cx| Page {
                 route: *destination,
                 events: self.events.clone(),
-                motion: Motion::default(),
+                expanded: false,
                 notifications: true,
                 input: (*destination == Destination::Settings).then(|| {
                     cx.new(|cx| {
@@ -130,27 +131,19 @@ impl Render for Shell {
 struct Page {
     route: Destination,
     events: Rc<[Activity]>,
-    motion: Motion,
+    expanded: bool,
     notifications: bool,
     input: Option<Entity<InputState>>,
 }
 
 impl Page {
-    fn overview(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (progress, moving) = self.motion.sample(Instant::now());
-        if moving {
-            window.request_animation_frame();
-        }
-        let label = if self.motion.expanded() {
+    fn overview(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.expanded {
             "Contract bar"
         } else {
             "Expand bar"
         };
-        let bar = div()
-            .w(px(72.0 + 240.0 * progress))
-            .h_2()
-            .rounded_full()
-            .bg(rake::theme::current::<Semantic>().primary);
+        let bar = motion::bar(rake::theme::current::<Semantic>().primary);
 
         rake::view! {
             <div class="flex flex-col gap-4 rounded-lg bg-surface p-5">
@@ -162,8 +155,9 @@ impl Page {
                     aria-label={label}
                     class="w-32 h-9 px-3 rounded-md bg-muted hover:bg-accent focus-visible:bg-accent"
                     on:click={
-                        cx.listener(|page, _, _, cx| {
-                            page.motion.reverse(Instant::now());
+                        cx.listener(|page, _, window, cx| {
+                            page.expanded = !page.expanded;
+                            motion::retarget(page.expanded, window, cx);
                             cx.notify();
                         })
                     }
@@ -265,14 +259,14 @@ impl Page {
 }
 
 impl Render for Page {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let subtitle = match self.route {
             Destination::Overview => "Native rendering and interruptible motion.",
             Destination::Activity => "1,200 events · scroll to browse",
             Destination::Settings => "Workspace preferences",
         };
         let body = match self.route {
-            Destination::Overview => self.overview(window, cx).into_any_element(),
+            Destination::Overview => self.overview(cx).into_any_element(),
             Destination::Activity => self.activity().into_any_element(),
             Destination::Settings => self.settings(cx).into_any_element(),
         };

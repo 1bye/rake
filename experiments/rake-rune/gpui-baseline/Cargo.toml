@@ -13,9 +13,10 @@ frame-profile = ["dep:gpui-profiler"]
 
 [dependencies]
 gpui-profiler = { package = "gpui-pre", version = "=0.3.11", default-features = false, features = ["profiler"], optional = true }
-rake = { package = "rake-app", path = "../../../crates/rake" }
+rake = { package = "rake-app", git = "https://github.com/1bye/rake", rev = "0274048dc500a747ebf178700bf920beca865dc8", features = ["motion"] }
 
 # Match the Rake workspace's dependency overrides.
 [patch.crates-io]
-gpui-base = { path = "../../../vendor/gpui-base" }
-gpui-pre-web = { path = "../../../vendor/gpui-pre-web" }
+gpui-base = { git = "https://github.com/1bye/rake", rev = "0274048dc500a747ebf178700bf920beca865dc8" }
+gpui-pre = { git = "https://github.com/1bye/rake", rev = "0274048dc500a747ebf178700bf920beca865dc8" }
+gpui-pre-web = { git = "https://github.com/1bye/rake", rev = "0274048dc500a747ebf178700bf920beca865dc8" }
