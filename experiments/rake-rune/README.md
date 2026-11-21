@@ -37,6 +37,55 @@ The records use stable `rake_protocol::router::RouteAddress` keys and
 `rake_diagnostics::Collector` sequence numbers and timestamps. The workload
 is entirely local.
 
+## Shared components
+
+`shared/components.rs` is included unchanged by `gpui-baseline` and the new
+unpublished `rake-rune` workspace. It imports the caller's unqualified `view!`.
+Both Settings screens use its Panel, Button props, SettingRow and Switch functions;
+the Rune sidebar also uses Button. Run the new app with:
+
+```sh
+(cd rake-rune && cargo run --release --locked)
+```
+
+The experimental `rake-rune-macros` consumes the public `rake_view_syntax` tree,
+not GPUI lowering. Elements, text, expression children, for/if/match, semantic
+colors, spacing, dimensions, rounded corners, hover/focus, keys, labels and press
+handlers lower directly to Rune builders. Capitalized tags construct typed props
+and invoke `rake_rune::Component::render`, with an owned children slot. Headless
+Runtime tests exercise both that contract and the shared Settings controls.
+Unknown classes, tags and attributes are errors; this is deliberately not the
+entire Rake utility vocabulary. Numeric spacing/dimensions use four-point units;
+rounded values use Rune radius tokens, colors map to Rune Theme fields, and text
+colors propagate through authored markup (not through opaque child components).
+
+The explicit differences are confined to each app's `backend` shim:
+
+- GPUI returns erased `AnyElement`s and boxed event/window/App callbacks;
+  Rune returns `El`s and queues `fn(&mut State)` mutations. GPUI listeners notify
+  entities; Rune rebuilds the view from its application state. The signal is a
+  checked snapshot plus a mutation callback, not a cross-renderer reactive store.
+- GPUI reads its installed semantic palette implicitly (`Theme = ()`); Rune
+  receives a lexical `theme: rune::tok::Theme`. Body text uses Rune's body token.
+  Theme selection and native text-input bindings remain app-owned adapters.
+- Children are owned vectors. A tiny `slot` helper supplies a stack on each
+  renderer: direct expression children in a GPUI markup loop require authored
+  keyed wrappers, even when the children already carry their own identities.
+- Rune adds checked switch semantics to the button itself. GPUI's erased element
+  cannot be restyled, so this prototype adds a switch-state accessibility wrapper.
+  A production component adapter should apply semantics before type erasure.
+
+**Verdict:** separate `rake-gpui::view!` / `rake-rune::view!` renderer crates over a
+shared syntax crate are viable; one shared component source compiles today.
+Prefer them to backend feature flags on one crate: Cargo unifies additive
+features, so two consumers can accidentally enable both stacks. Independent
+consumer workspaces also preserve the pinned Rust 1.98/1.99.1 toolchains and
+incompatible root patch sets. Published Rake crates remain Rune-independent;
+this experiment changes none of them. This proves a renderer seam, not parity
+for Rake routing, entities, lifecycle, arbitrary utilities or component derives.
+
+![Shared components on Rune](artifacts/rake-rune-settings.png)
+
 ## What Rune needed to replace
 
 | Rake integration exercised by the baseline | Rune implementation |

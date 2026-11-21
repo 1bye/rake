@@ -6,12 +6,16 @@ use std::rc::Rc;
 use rake::gpui::prelude::*;
 use rake::gpui::{
     self, AnyView, Bounds, Context, Entity, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    accesskit::{Role, Toggled},
-    px, size, uniform_list,
+    accesskit::Role, px, size, uniform_list,
 };
 use rake::router::{LayoutContext, MountError, PageContext, Route, RouteViews};
 use rake::theme::Semantic;
 use rake::ui::input::{Input, InputAccessibility, InputState};
+use rake::view;
+
+mod backend;
+#[path = "../../shared/components.rs"]
+mod components;
 
 #[path = "../../activity.rs"]
 mod activity;
@@ -199,12 +203,37 @@ impl Page {
         } else {
             "Use dark theme"
         };
-        let toggled = Toggled::from(self.notifications);
-        let switch_label = if self.notifications { "On" } else { "Off" };
         let input = self.input.as_ref().map(Input::new);
+        let shared_theme_button = components::button(
+            (),
+            components::ButtonProps {
+                id: "theme",
+                label: theme_label,
+                on_click: Box::new(move |_, _, cx| {
+                    rake::theme::install(
+                        cx,
+                        if dark {
+                            Semantic::light()
+                        } else {
+                            Semantic::dark()
+                        },
+                    );
+                }),
+            },
+        );
 
-        rake::view! {
-            <div class="flex flex-col gap-4 rounded-lg bg-surface p-5">
+        let notifications = components::switch(
+            (),
+            backend::Signal {
+                checked: self.notifications,
+                toggle: Box::new(cx.listener(|page, _, _, cx| {
+                    page.notifications = !page.notifications;
+                    cx.notify();
+                })),
+            },
+        );
+        let workspace = rake::view! {
+            <div class="flex flex-col gap-4">
                 <p class="font-semibold">"Workspace name"</p>
                 <div
                     class="flex flex-row items-center h-9 px-3 rounded-md border border-border bg-background"
@@ -213,48 +242,16 @@ impl Page {
                         {input}
                     }
                 </div>
-                <div class="flex flex-row items-center justify-between gap-4">
-                    <p>"Notifications"</p>
-                    <button
-                        id="notifications"
-                        role={Role::Switch}
-                        aria-label={format!("Notifications {switch_label}")}
-                        style={move |button| button.aria_toggled(toggled)}
-                        class="w-16 h-9 rounded-full bg-muted hover:bg-accent focus-visible:bg-accent"
-                        on:click={
-                            cx.listener(|page, _, _, cx| {
-                                page.notifications = !page.notifications;
-                                cx.notify();
-                            })
-                        }
-                    >
-                        {switch_label}
-                    </button>
-                </div>
-                <div class="flex flex-row items-center justify-between gap-4">
-                    <p>"Appearance"</p>
-                    <button
-                        id="theme"
-                        aria-label={theme_label}
-                        class="w-36 h-9 rounded-md bg-muted hover:bg-accent focus-visible:bg-accent"
-                        on:click={
-                            move |_, _, cx| {
-                                rake::theme::install(
-                                    cx,
-                                    if dark {
-                                        Semantic::light()
-                                    } else {
-                                        Semantic::dark()
-                                    }
-                                );
-                            }
-                        }
-                    >
-                        {theme_label}
-                    </button>
-                </div>
             </div>
-        }
+        }.into_any_element();
+        components::panel(
+            (),
+            vec![
+                workspace,
+                components::setting_row((), "Notifications", vec![notifications]),
+                components::setting_row((), "Appearance", vec![shared_theme_button]),
+            ],
+        )
     }
 }
 
