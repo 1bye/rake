@@ -1,0 +1,23 @@
+[package]
+name = "rake-rune-eval"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+rake-protocol = { path = "../../../crates/rake-protocol" }
+rake-diagnostics = { path = "../../../crates/rake-diagnostics" }
+rake-resources = { path = "../../../crates/rake-resources" }
+
+# Cargo only reads patches from the application's workspace root.
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }

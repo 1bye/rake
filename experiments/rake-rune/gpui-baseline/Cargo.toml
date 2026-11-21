@@ -1,0 +1,21 @@
+[package]
+name = "rake-gpui-eval"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[features]
+frame-profile = ["dep:gpui-profiler"]
+
+[dependencies]
+gpui-profiler = { package = "gpui-pre", version = "=0.3.11", default-features = false, features = ["profiler"], optional = true }
+rake = { package = "rake-app", path = "../../../crates/rake" }
+
+# Match the Rake workspace's dependency overrides.
+[patch.crates-io]
+gpui-base = { path = "../../../vendor/gpui-base" }
+gpui-pre-web = { path = "../../../vendor/gpui-pre-web" }

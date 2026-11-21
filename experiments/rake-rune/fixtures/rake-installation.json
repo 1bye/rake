@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "identifier": "dev.rake.rune-eval",
+  "version": "0.1.0",
+  "target": "aarch64-apple-darwin",
+  "platform": "macos",
+  "format": "app",
+  "update_owner": "disabled",
+  "updates": {},
+  "helpers": {},
+  "runtimes": {}
+}
