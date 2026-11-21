@@ -124,13 +124,17 @@ Wayland compositor authorization, or cross-application focus behavior.
 
 ## Secrets
 
-`platform.secrets(app_id)?` opens an app-chosen namespace. With `gpui`, call
-`read(name, cx)`, `write(name, Secret::new(bytes), cx)` or `delete(name, cx)` and
-await the returned `Request`. Missing reads return `None`; missing deletes succeed.
-Calls initiate GPUI tasks immediately; native keychain work runs on its background
-executor and may prompt. Dropping a request cannot undo an initiated write.
+`platform.secrets()?` uses the application id configured in `App::new`. A
+platform without a configured id returns `Error::MissingApplicationId`. With
+`gpui`, call `read(name, cx)`, `write(name, token.into(), cx)` or
+`delete(name, cx)` and await the returned `Request`. `Secret` takes ownership
+of a `String` or `Vec<u8>` without copying its bytes. Missing reads return
+`None` and missing deletes succeed. Calls initiate GPUI tasks immediately.
+Native keychain work runs on its background executor and may prompt.
+Dropping a request cannot undo an initiated write.
 
-Use your stable application id, and non-secret names (both 1–128 UTF-8 bytes).
+Keep the application id stable across restarts and use non-secret names. Ids
+and names must each be 1–128 UTF-8 bytes.
 The URL key is `rake-secret://v1/<hex UTF-8 app id>/<hex UTF-8 name>`;
 the username is always `rake-secret-v1`. Encoding is case-sensitive and injective.
 Each name needs its own URL because GPUI reads/deletes by URL alone. Namespacing

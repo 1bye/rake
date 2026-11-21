@@ -166,8 +166,11 @@ impl App<NoRoute> {
     /// setup failures warn and continue. Use [`Self::without_crash_reports`] to opt
     /// out. Its nonempty, whitespace-free ID is validated at startup.
     pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        let platform = crate::platform::Platform::for_application(&id);
+
         Self {
-            id: id.into(),
+            id,
             single_instance: false,
             reopen: None,
             services: ServiceRegistry::new(),
@@ -177,7 +180,7 @@ impl App<NoRoute> {
             navigation_feedback: true,
             http: HttpConfig::new(),
             http_client: RefCell::new(None),
-            platform: crate::platform::Platform::default(),
+            platform,
             layout: None,
             new_window_options: None,
             configuration_error: None,

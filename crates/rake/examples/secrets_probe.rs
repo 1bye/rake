@@ -4,22 +4,21 @@
 use gpui_fast_platform as host;
 #[cfg(not(feature = "gpui-fast"))]
 use gpui_platform as host;
-use rake::platform::{Platform, Secret};
+use rake::App;
 
 fn main() {
     let operation = std::env::args().nth(1).expect("write, read or delete");
 
-    host::application().run(move |cx| {
-        let secrets = Platform::default()
-            .secrets("dev.rake.secrets-17-test")
-            .unwrap();
+    let secrets = App::new("dev.rake.secrets-17-test")
+        .services()
+        .expect("probe services")
+        .platform()
+        .secrets()
+        .expect("probe credential namespace");
 
+    host::application().run(move |cx| {
         let request = match operation.as_str() {
-            "write" => secrets.write(
-                "restart-probe",
-                Secret::new(b"rake-test-token".to_vec()),
-                cx,
-            ),
+            "write" => secrets.write("restart-probe", String::from("rake-test-token").into(), cx),
             "read" => {
                 let read = secrets.read("restart-probe", cx);
 

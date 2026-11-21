@@ -66,12 +66,11 @@ impl Render for Home {
                 <button
                     on:click={
                         cx.listener(|this, _, _, cx| {
-                            let result =
-                                this.page.services().platform().secrets("dev.rake.starter");
+                            let result = this.page.services().platform().secrets();
                             if let Ok(secrets) = result {
                                 let request = secrets.write(
                                     "demo-token",
-                                    rake::platform::Secret::new(b"example-token".to_vec()),
+                                    String::from("example-token").into(),
                                     cx
                                 );
                                 this.token = Some(
@@ -87,9 +86,7 @@ impl Render for Home {
                 <button
                     on:click={
                         cx.listener(|this, _, _, cx| {
-                            if let Ok(secrets) =
-                                this.page.services().platform().secrets("dev.rake.starter")
-                            {
+                            if let Ok(secrets) = this.page.services().platform().secrets() {
                                 let request = secrets.read("demo-token", cx);
                                 this.token = Some(this.page.action(cx, async move {
                                     request.await.map(|value| value.is_some())
@@ -103,9 +100,7 @@ impl Render for Home {
                 <button
                     on:click={
                         cx.listener(|this, _, _, cx| {
-                            if let Ok(secrets) =
-                                this.page.services().platform().secrets("dev.rake.starter")
-                            {
+                            if let Ok(secrets) = this.page.services().platform().secrets() {
                                 let request = secrets.delete("demo-token", cx);
                                 this.token = Some(
                                     this.page

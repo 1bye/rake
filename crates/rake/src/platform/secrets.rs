@@ -20,6 +20,18 @@ impl Secret {
     }
 }
 
+impl From<String> for Secret {
+    fn from(token: String) -> Self {
+        Self::new(token.into_bytes())
+    }
+}
+
+impl From<Vec<u8>> for Secret {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Secret([REDACTED])")
@@ -41,9 +53,18 @@ impl std::fmt::Debug for Secrets {
 }
 
 impl Platform {
-    /// Opens a keychain namespace; this does not access or prompt the keychain.
-    /// App ids and names must be nonempty and at most 128 UTF-8 bytes each.
-    pub fn secrets(&self, app_id: &str) -> Result<Secrets, Error> {
+    /// Opens the configured application's credential namespace without accessing the keychain.
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingApplicationId`] when the platform has no configured
+    /// application id, or [`Error::InvalidInput`] if the id is outside 1–128 UTF-8 bytes.
+    /// Credential operations apply the same length limit to names.
+    pub fn secrets(&self) -> Result<Secrets, Error> {
+        let app_id = self
+            .application_id
+            .as_deref()
+            .ok_or(Error::MissingApplicationId)?;
+
         validate(app_id)?;
 
         Ok(Secrets {
@@ -278,14 +299,50 @@ mod tests {
     }
 
     #[test]
+    fn default_platform_has_no_secret_namespace() {
+        assert!(matches!(
+            Platform::default().secrets(),
+            Err(Error::MissingApplicationId)
+        ));
+    }
+
+    #[cfg(feature = "gpui")]
+    #[test]
+    fn app_services_use_the_configured_namespace() {
+        let services = crate::App::new("example.app").services().unwrap();
+        let secrets = services.platform().secrets().unwrap();
+
+        assert_eq!(
+            secrets.key("token").unwrap(),
+            "rake-secret://v1/6578616d706c652e617070/746f6b656e"
+        );
+    }
+
+    #[test]
     fn names_do_not_collide() {
-        let platform = Platform::default();
-        let first = platform.secrets("a/b").unwrap();
-        let second = platform.secrets("a").unwrap();
+        let first = Platform::for_application("a/b").secrets().unwrap();
+        let second = Platform::for_application("a").secrets().unwrap();
 
         assert_ne!(first.key("c").unwrap(), second.key("b/c").unwrap());
         assert_ne!(first.key("A").unwrap(), first.key("a").unwrap());
         assert!(first.key("").is_err());
+    }
+
+    #[test]
+    fn conversions_reuse_owned_buffers() {
+        let token = String::from("tökén");
+        let token_ptr = token.as_ptr();
+        let secret = Secret::from(token);
+
+        assert_eq!(secret.expose(), "tökén".as_bytes());
+        assert_eq!(secret.expose().as_ptr(), token_ptr);
+
+        let bytes = vec![0, 255, 42];
+        let bytes_ptr = bytes.as_ptr();
+        let secret = Secret::from(bytes);
+
+        assert_eq!(secret.expose(), &[0, 255, 42]);
+        assert_eq!(secret.expose().as_ptr(), bytes_ptr);
     }
 
     #[test]
