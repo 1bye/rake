@@ -182,25 +182,24 @@ impl Element {
         probe.children.clear();
         probe.attributes = vec![attribute.clone()];
 
+        // Required properties are context, not independent errors on every attribute.
+        for (name, _) in self.resolved.required_attributes() {
+            if attribute.name != *name {
+                let value = self.attribute(name).cloned().unwrap_or_else(|| Attribute {
+                    name: (*name).into(),
+                    action: None,
+                    span: self.tag.span(),
+                    value: AttributeValue::Expression(syn::parse_quote!("")),
+                });
+
+                probe.attributes.push(value);
+            }
+        }
+
         if inline {
             let dummy = format_ident!("__rake_probe", span = Span::mixed_site());
-
             super::paragraph::inline_element(&probe, &dummy, &dummy, rake, &mut 0)?;
         } else {
-            // Required properties are context, not independent errors on every attribute.
-            for (name, _) in self.resolved.required_attributes() {
-                if attribute.name != *name {
-                    let value = self.attribute(name).cloned().unwrap_or_else(|| Attribute {
-                        name: (*name).into(),
-                        action: None,
-                        span: self.tag.span(),
-                        value: AttributeValue::Expression(syn::parse_quote!("")),
-                    });
-
-                    probe.attributes.push(value);
-                }
-            }
-
             probe.expand(rake, &mut 0)?;
         }
 

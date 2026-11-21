@@ -35,6 +35,7 @@ pub(super) const STYLE: &str = "view-style-class";
 pub(super) const THEME: &str = "view-theme-literal";
 pub(super) const RELEASE: &str = "release-debug-assertions";
 pub(super) const BUTTON: &str = "view-button-label";
+pub(super) const LINK: &str = "view-link-label";
 pub(super) const IMAGE: &str = "view-image-alt";
 pub(super) const INDEX: &str = "view-loop-index-id";
 pub(super) const DROPPED_TASK: &str = "gpui-dropped-task";
@@ -85,7 +86,7 @@ pub(super) const RULES: &[Rule] = &[
     Rule {
         id: BUTTON,
         agent_summary: Some(
-            "Always give icon-only or dynamic buttons an aria-label, preserving any visible words.",
+            "Always give icon-only or dynamic buttons an aria-label, preserving visible words; give links text or an aria-label.",
         ),
         level: Level::Warn,
         message: "button content has no automatic accessible label",
@@ -93,6 +94,16 @@ pub(super) const RULES: &[Rule] = &[
         fix: "add aria-label={visible_text}; use the visible text as the label (label-in-name); add context only after it",
         before: "<button>{title.clone()}</button>\n<button>{icon}</button>",
         after: "<button aria-label={title.clone()}>{title.clone()}</button>\n<button aria-label=\"Search\">{icon}</button>",
+    },
+    Rule {
+        id: LINK,
+        agent_summary: None,
+        level: Level::Warn,
+        message: "link has no accessible name",
+        explanation: "Links need nonempty literal text or an explicit aria-label. Inline text styling preserves a literal name; opaque dynamic content needs an explicit label.",
+        fix: "add visible text or aria-label describing the destination",
+        before: "<a href=\"/\"/>",
+        after: "<a href=\"/\">Home</a>",
     },
     Rule {
         id: IMAGE,
@@ -195,7 +206,7 @@ pub(super) fn rule(id: &str) -> Option<&'static Rule> {
 }
 
 pub(super) fn suppressible(id: &str) -> bool {
-    matches!(id, BUTTON | IMAGE | INDEX | STYLE | THEME | RELEASE) || is_deep(id)
+    matches!(id, BUTTON | LINK | IMAGE | INDEX | STYLE | THEME | RELEASE) || is_deep(id)
 }
 
 pub(super) fn is_deep(id: &str) -> bool {

@@ -8,3 +8,11 @@ navigation and deletion through Base's existing multicaret actions. A rejected
 final IME edit rolls back its pending composition. Notes also opts into a
 body byte limit checked before edits and retains spaces between title lines.
 Remove the Cargo patch once the pinned upstream release supports these behaviors.
+
+## Issue 87: styled selectable paragraphs
+
+`SelectableText::styled` accepts the facade’s styled text and `selectable` allows the same layout for nonselectable links. Selection gestures, projection, copy, and theme selection color remain Base-owned.
+
+Root copy preserves selected leading/trailing whitespace instead of trimming the visible text.
+
+Web also binds Command-C alongside Control-C, since the Wasm target’s OS is not the browser host OS.

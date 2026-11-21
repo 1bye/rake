@@ -328,6 +328,16 @@ impl Counter {
                         <p>Counter locked. Increment and Reset are disabled.</p>
                     } else if self.count == 0 {
                         <p>Click Increment to get started.</p>
+                        <p id="selectable-guide" select-text>
+                            "Select and copy this "
+                            <strong>"styled paragraph"</strong>
+                            " with a "
+                            <a id="inline-guide" href="https://example.org/">
+                                "working inline link that can wrap across lines"
+                            </a>
+                            "."
+                        </p>
+                        <a id="standalone-guide" href="https://example.org/">"Open the guide"</a>
                     } else {
                         <p>You have counted {self.count.to_string()} times.</p>
                     }

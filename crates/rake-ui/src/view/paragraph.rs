@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+mod interactive;
 mod layout;
 
 use gpui::{
@@ -44,6 +45,7 @@ struct Run {
 pub struct ParagraphContent {
     text: String,
     runs: Vec<Run>,
+    links: Vec<interactive::Link>,
 }
 
 impl ParagraphContent {
@@ -61,6 +63,7 @@ impl ParagraphContent {
 
         if let Some(last) = self.runs.last_mut()
             && last.style == *style
+            && !self.links.iter().any(|link| link.range.end == start)
         {
             last.range.end = self.text.len();
         } else {
@@ -71,11 +74,58 @@ impl ParagraphContent {
         }
     }
 
+    /// Current visible buffer boundary, used to delimit inline links.
+    pub fn text_len(&self) -> usize {
+        self.text.len()
+    }
+
+    /// Records a link over the composed text, with an authored stable identity.
+    pub fn link(
+        &mut self,
+        start: usize,
+        href: impl Into<SharedString>,
+        id: impl Into<ElementId>,
+        label: Option<SharedString>,
+        inspect: impl Fn(gpui::Stateful<gpui::Div>, Option<&gpui::FocusHandle>) -> gpui::AnyElement
+        + 'static,
+    ) {
+        let href = href.into();
+        if super::link::classify_href(&href) != super::link::HrefKind::Rejected {
+            let mut split = Vec::new();
+            for run in self.runs.drain(..) {
+                let mut boundaries = vec![run.range.start, run.range.end];
+                for boundary in [start, self.text.len()] {
+                    if run.range.start < boundary && boundary < run.range.end {
+                        boundaries.push(boundary);
+                    }
+                }
+                boundaries.sort_unstable();
+                for pair in boundaries.windows(2) {
+                    split.push(Run {
+                        range: pair[0]..pair[1],
+                        style: run.style.clone(),
+                    });
+                }
+            }
+            self.runs = split;
+            self.links.push(interactive::Link {
+                range: start..self.text.len(),
+                href,
+                id: id.into(),
+                label,
+                inspect: std::rc::Rc::new(inspect),
+            });
+        }
+    }
+
     /// Produces one GPUI text layout while preserving the untruncated accessible value.
     pub fn finish(self) -> ParagraphText {
         ParagraphText {
             text: self.text.into(),
             runs: self.runs,
+            links: self.links,
+            selectable: false,
+            interactive: None,
             layout: Default::default(),
         }
     }
@@ -86,10 +136,19 @@ impl ParagraphContent {
 pub struct ParagraphText {
     text: SharedString,
     runs: Vec<Run>,
+    links: Vec<interactive::Link>,
+    selectable: bool,
+    interactive: Option<interactive::Frame>,
     layout: std::rc::Rc<std::cell::RefCell<layout::ParagraphLayout>>,
 }
 
 impl ParagraphText {
+    /// Enables Base's window selection for this composed text.
+    pub fn select_text(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
     /// Shares the complete, untruncated text for a composed heading's accessible name.
     pub fn full_text(&self) -> SharedString {
         self.text.clone()
@@ -129,8 +188,9 @@ impl Element for ParagraphText {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        crate::init(cx);
         let base = window.text_style();
 
         let mut runs: Vec<_> = self
@@ -142,6 +202,16 @@ impl Element for ParagraphText {
                     .highlight(run.style.highlight)
                     .to_run(run.range.len());
 
+                if self.links.iter().any(|link| {
+                    link.range.start < run.range.end && run.range.start < link.range.end
+                }) {
+                    text_run.color = gpui_base::Theme::global(cx).tokens.colors.primary;
+                    text_run.underline = Some(gpui::UnderlineStyle {
+                        thickness: gpui::px(1.),
+                        color: None,
+                        wavy: false,
+                    });
+                }
                 if let Some(family) = &run.style.family {
                     text_run.font.family = family.clone();
                 }
@@ -161,13 +231,22 @@ impl Element for ParagraphText {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _state: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
+        if self.selectable || !self.links.is_empty() {
+            self.interactive = Some(interactive::Frame::new(
+                self,
+                id.expect("paragraph ID"),
+                bounds,
+                window,
+                cx,
+            ));
+        }
     }
 
     fn paint(
@@ -180,7 +259,11 @@ impl Element for ParagraphText {
         window: &mut Window,
         cx: &mut App,
     ) {
-        layout::paint(&state.borrow(), bounds, window, cx);
+        if let Some(frame) = &mut self.interactive {
+            frame.paint(window, cx);
+        } else {
+            layout::paint(&state.borrow(), bounds, window, cx);
+        }
     }
 }
 

@@ -11,7 +11,7 @@ use syn::visit::{self, Visit};
 use syn::{Expr, Pat, Token};
 
 use super::Diagnostic;
-use super::catalogue::{BUTTON, IMAGE, INDEX, STYLE, SYNTAX, THEME};
+use super::catalogue::{BUTTON, IMAGE, INDEX, LINK, STYLE, SYNTAX, THEME};
 use super::design;
 pub(super) use super::design::installs_theme;
 
@@ -83,6 +83,25 @@ impl Checker<'_> {
             self.emit(BUTTON, element.tag.span());
         }
 
+        if element.tag.is_ident("a") {
+            let explicit = element.attributes.iter().any(|attribute| {
+                attribute.name == "aria-label"
+                    && match &attribute.value {
+                        AttributeValue::Expression(value) => match value.as_ref() {
+                            Expr::Lit(value) => match &value.lit {
+                                syn::Lit::Str(text) => !text.value().trim().is_empty(),
+                                _ => true,
+                            },
+                            _ => true,
+                        },
+                        _ => true,
+                    }
+            });
+            if !explicit && !link_text(&element.children) {
+                self.emit(LINK, element.tag.span());
+            }
+        }
+
         if element.tag.is_ident("img") && !has("alt") {
             self.emit(IMAGE, element.tag.span());
         }
@@ -91,7 +110,7 @@ impl Checker<'_> {
             && [
                 "div", "section", "span", "nav", "header", "footer", "main", "aside", "article",
                 "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "button", "img", "svg",
-                "hr", "strong", "em",
+                "hr", "strong", "em", "a",
             ]
             .iter()
             .any(|name| element.tag.is_ident(name));
@@ -387,4 +406,18 @@ fn format_captures(format: &str, indices: &[String]) -> bool {
     }
 
     false
+}
+
+fn link_text(children: &[Node]) -> bool {
+    children.iter().any(|child| match child {
+        Node::Text(text) => !text.value().trim().is_empty(),
+        Node::Element(element)
+            if ["span", "strong", "em"]
+                .iter()
+                .any(|name| element.tag.is_ident(name)) =>
+        {
+            link_text(&element.children)
+        }
+        _ => false,
+    })
 }
