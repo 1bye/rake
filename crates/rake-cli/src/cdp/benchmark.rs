@@ -47,6 +47,7 @@ pub(super) fn capture(count: usize) -> Snapshot {
         status: Status::Captured,
         capture: "one".into(),
         router_revision: 0,
+        locale: None,
         omitted: 0,
         coverage: "generated benchmark boundaries".into(),
         elements: (0..count)

@@ -59,6 +59,8 @@ macro_rules! early_startup {
 pub mod control;
 
 pub mod crash;
+#[cfg(feature = "locale")]
+pub mod locale;
 pub mod logging;
 
 #[cfg(all(feature = "devtools-memory", unix))]

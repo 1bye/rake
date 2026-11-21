@@ -41,7 +41,7 @@ pub(super) fn describe(
     json!({
         "version":1,"runtimeId":info.runtime_id,"platform":info.platform,"methods":methods,
         "errorContractVersion":1,
-        "agentQuery":{"filters":["nodeId","stableId","id","role","name","text","textContains","textContent","textContentContains","bounds","enabled","visible"],"snapshotOptions":["limit","offset","expectedRevision","rootNodeId"],"textContent":"captured rendered text; a boundary owns its text or aggregates descendants; private input values are excluded"},
+        "agentQuery":{"filters":["nodeId","stableId","id","role","name","messageKey","text","textContains","textContent","textContentContains","bounds","enabled","visible"],"snapshotOptions":["limit","offset","expectedRevision","rootNodeId"],"textContent":"captured rendered text; a boundary owns its text or aggregates descendants; private input values are excluded"},
         "sourceRead":{"supported":sources && inspection && native,"transport":"snapshot source.url HTTP GET"},
         "nativeWindowsAvailable":native,"nativeError":native_error,
         "limits":{"evidenceBytes":921600,"evidenceTreeNodes":64,"capturedTextBytes":16777216,"snapshotNodes":256,"waitHandles":32,"waitTimeoutMs":30000,"requestTimeoutMs":2000,"textBytes":16384,"imageBytes":768000,"messageBytes":1048576},

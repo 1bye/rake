@@ -71,6 +71,10 @@ pub(super) fn node(
             result["name"] = json!({"type":"string","value":label});
         }
 
+        if let Some(key) = &a11y.message_key {
+            result["messageKey"] = json!(key);
+        }
+
         if let Some(description) = &a11y.description {
             result["description"] = json!({"type":"string","value":description});
         }

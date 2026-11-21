@@ -66,6 +66,7 @@ mod tests {
             status: Status::Captured,
             capture: capture.into(),
             router_revision: 0,
+            locale: None,
             omitted: 0,
             coverage: "x".repeat(bytes),
             elements: vec![],

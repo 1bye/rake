@@ -166,6 +166,7 @@ pub(super) struct Selector {
     pub id: Option<String>,
     pub role: Option<String>,
     pub name: Option<String>,
+    pub message_key: Option<String>,
     pub text_contains: Option<String>,
     pub text: Option<String>,
     pub text_content: Option<String>,
@@ -378,6 +379,10 @@ pub(super) fn project(
                 .as_ref()
                 .is_some_and(|v| name != Some(v.as_str()))
             || selector
+                .message_key
+                .as_ref()
+                .is_some_and(|key| ax.and_then(|a| a.message_key.as_ref()) != Some(key))
+            || selector
                 .text_contains
                 .as_ref()
                 .is_some_and(|v| !element.text.as_deref().is_some_and(|text| text.contains(v)))
@@ -403,7 +408,7 @@ pub(super) fn project(
 
         elements.push(json!({"nodeId":node,"stableId":element.stable_id,"id":element.semantic_id,
             "parentId":element.parent.as_deref().and_then(|p|dom.node_id(p)),"type":element.display_name(),
-            "role":role,"name":name.map(prefix),"nameTruncated":name.is_some_and(|n|n.len()>512),"text":element.text.as_deref().map(prefix),
+            "role":role,"name":name.map(prefix),"messageKey":ax.and_then(|a|a.message_key.as_deref()),"nameTruncated":name.is_some_and(|n|n.len()>512),"text":element.text.as_deref().map(prefix),
             "textContent":prefix(content.text(index)),"textContentTruncated":content.text(index).len()>512,"textContentComplete":content.complete(index),
             "textTruncated":element.text.as_ref().is_some_and(|t|t.len()>512),"bounds":element.layout,
             "visibleBounds":element.content_mask,"visible":visible,"enabled":enabled,
@@ -414,7 +419,7 @@ pub(super) fn project(
     Ok(
         json!({"windowId":presentation.window,"frameSequence":presentation.frame,"revision":revision,"rootNodeId":root,"queryComplete":query_complete,
         "elements":elements,"totalMatches":matches,"offset":offset,"hasMore":matches>offset+limit,
-        "omitted":presentation.tree.omitted,"coverage":presentation.tree.coverage,
+        "locale":presentation.tree.locale,"omitted":presentation.tree.omitted,"coverage":presentation.tree.coverage,
         "visibilitySemantics":"sampled layout, clipping and accessibility; final occlusion is unavailable"}),
     )
 }

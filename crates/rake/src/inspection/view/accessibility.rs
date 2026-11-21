@@ -76,6 +76,7 @@ pub(super) fn capture<E: Element>(
         label,
         name,
         name_source,
+        message_key: None,
         states,
         description: node
             .description()

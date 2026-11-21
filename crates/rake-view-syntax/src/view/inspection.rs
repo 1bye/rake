@@ -115,7 +115,11 @@ impl Element {
         let node = syn::Ident::new("__rake_inspection_element", Span::mixed_site());
         let mut inspected = quote_spanned!(self.tag.span()=> #rake::__private::view_inspect(#node, #definition, #named));
 
-        for (attribute, method) in [("focus", "focus_handle"), ("scroll", "scroll_handle")] {
+        for (attribute, method) in [
+            ("focus", "focus_handle"),
+            ("scroll", "scroll_handle"),
+            ("message-key", "message_key"),
+        ] {
             if let Some(value) = self.attribute(attribute) {
                 let value = value.expression().expect("validated handle");
                 let method = syn::Ident::new(method, value.span());
