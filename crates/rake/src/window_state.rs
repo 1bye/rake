@@ -48,7 +48,7 @@ struct Inner {
     preferences: Preferences,
     records: RefCell<BTreeMap<String, SavedWindow>>,
     loaded: std::cell::Cell<bool>,
-    writes: futures::lock::Mutex<()>,
+    writes: std::sync::Arc<futures::lock::Mutex<()>>,
 }
 
 impl std::fmt::Debug for WindowState {
@@ -73,7 +73,7 @@ impl WindowState {
                 preferences,
                 records: RefCell::new(BTreeMap::new()),
                 loaded: std::cell::Cell::new(false),
-                writes: futures::lock::Mutex::new(()),
+                writes: std::sync::Arc::new(futures::lock::Mutex::new(())),
             }),
             keys: Rc::new(|id| (id == WindowId(1)).then(|| "main".into())),
         }
@@ -112,12 +112,12 @@ impl WindowState {
 
         #[cfg(not(target_family = "wasm"))]
         {
-            let _write = self.inner.writes.lock().await;
+            let write = self.inner.writes.clone().lock_owned().await;
 
             self.load_locked().await?;
             self.inner.records.borrow_mut().remove(key);
 
-            self.save_locked().await
+            self.save_locked(write).await
         }
     }
 
@@ -135,10 +135,22 @@ impl WindowState {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    async fn save_locked(&self) -> Result<(), crate::platform::Error> {
+    async fn save_locked(
+        &self,
+        write: futures::lock::OwnedMutexGuard<()>,
+    ) -> Result<(), crate::platform::Error> {
         let value = placement::encode(&self.inner.records.borrow());
 
-        self.inner.preferences.set(PREFERENCE_KEY, &value).await
+        let preferences = self.inner.preferences.clone();
+
+        // Release serialization on the blocking thread, even when the UI stops
+        // polling the writer during shutdown.
+        blocking::unblock(move || {
+            let _write = write;
+
+            preferences.set_blocking(PREFERENCE_KEY, &value)
+        })
+        .await
     }
 
     #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
@@ -159,9 +171,9 @@ impl WindowState {
 
     #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
     async fn save(&self) {
-        let _write = self.inner.writes.lock().await;
+        let write = self.inner.writes.clone().lock_owned().await;
 
-        if let Err(error) = self.save_locked().await {
+        if let Err(error) = self.save_locked(write).await {
             crate::warn!(
                 error_type = std::any::type_name_of_val(&error),
                 "window placement could not be saved"
