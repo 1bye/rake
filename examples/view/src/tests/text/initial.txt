@@ -6,3 +6,5 @@ Recent counts
 Reverse order
 Click a row, then press R: its state and focus follow it. B activates the focused row.
 No entries yet.
+Select and copy this styled paragraph with a working inline link that can wrap across lines.
+Open the guide

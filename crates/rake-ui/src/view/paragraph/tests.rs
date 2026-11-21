@@ -299,7 +299,11 @@ mod selection_frames {
                 " alpha link omega "
             );
         });
-        cx.simulate_keystrokes("cmd-c");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        });
         cx.update(|_, cx| {
             assert_eq!(
                 cx.read_from_clipboard().and_then(|item| item.text()),
