@@ -113,6 +113,7 @@ silently registered. Repeated presses may be coalesced while the UI is busy.
   the portal owns conflict resolution and user-approved bindings. Closing the
   private D-Bus connection ends the session on unregister/drop, including pending
   authorization. A missing portal returns Unsupported. Rake never bypasses it.
+- On X11, an unset display returns Unsupported; connection failures retain the native diagnostic.
 - Web, headless builds and hosts without the feature return explicit Unsupported.
   `capabilities().global_shortcuts` reports support. On Linux it starts false;
   await `global_shortcuts().available()` to refresh that shared capability snapshot

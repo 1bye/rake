@@ -213,7 +213,7 @@ async fn x11_worker(
     };
 
     let setup = || {
-        let (connection, screen) = x11rb::connect(None).map_err(|_| Error::Unsupported)?;
+        let (connection, screen) = x11rb::connect(None).map_err(x11_connect_error)?;
         let root = connection.setup().roots[screen].root;
         let key = accelerator
             .key
@@ -334,4 +334,37 @@ async fn x11_worker(
 
 fn x11_error(error: impl std::fmt::Display) -> Error {
     Error::Native(error.to_string())
+}
+
+fn x11_connect_error(error: x11rb::errors::ConnectError) -> Error {
+    match error {
+        x11rb::errors::ConnectError::DisplayParsingError(
+            x11rb::errors::DisplayParsingError::DisplayNotSet,
+        ) => Error::Unsupported,
+        error => Error::Native(format!("could not connect to X11 display: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_unconfigured_display_is_unsupported() {
+        use x11rb::errors::{ConnectError, DisplayParsingError};
+
+        assert!(matches!(
+            x11_connect_error(ConnectError::DisplayParsingError(
+                DisplayParsingError::DisplayNotSet
+            )),
+            Error::Unsupported
+        ));
+        let error = ConnectError::InvalidScreen;
+        let diagnostic = error.to_string();
+
+        assert!(matches!(
+            x11_connect_error(error),
+            Error::Native(message) if message.contains(&diagnostic)
+        ));
+    }
 }
