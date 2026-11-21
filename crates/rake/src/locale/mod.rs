@@ -354,18 +354,26 @@ fn system_locales() -> Vec<String> {
         .collect()
 }
 
-#[cfg(all(feature = "kit", not(target_family = "wasm")))]
-fn sync_kit(locale: &Locale) {
+/// Picks Kit's catalogue: exact tag, bare language, then a regional sibling such as
+/// `pt-BR` for `pt-PT`, and English only when Kit has no catalogue in that language.
+#[cfg(any(all(feature = "kit", not(target_family = "wasm")), test))]
+fn kit_locale(locale: &Locale) -> &'static str {
     // shortcut: Kit 0.9's supported tags are pinned here until Kit exposes the catalogue list.
     const SUPPORTED: &[&str] = &["en", "pt-BR", "ru", "zh-CN", "zh-HK", "zh-TW", "it"];
     let exact = locale.id.to_string();
     let language = locale.id.language.as_str();
-    let kit_locale = [exact.as_str(), language]
-        .into_iter()
-        .find(|tag| SUPPORTED.contains(tag))
-        .unwrap_or("en");
 
-    crate::kit::component::set_locale(kit_locale);
+    let find = |matches: &dyn Fn(&str) -> bool| SUPPORTED.iter().copied().find(|tag| matches(tag));
+
+    find(&|tag| tag == exact)
+        .or_else(|| find(&|tag| tag == language))
+        .or_else(|| find(&|tag| tag.split('-').next() == Some(language)))
+        .unwrap_or("en")
+}
+
+#[cfg(all(feature = "kit", not(target_family = "wasm")))]
+fn sync_kit(locale: &Locale) {
+    crate::kit::component::set_locale(kit_locale(locale));
 }
 
 #[cfg(not(all(feature = "kit", not(target_family = "wasm"))))]

@@ -4,8 +4,8 @@ This slice exercises [the design for #21](internationalisation.md) with English
 and European Portuguese. The normal view example opens the original counter.
 Enable `i18n-icu` to open the inbox with Fluent, cardinal plurals, decimal
 formatting and Gregorian civil dates. The counter remains reachable from the
-inbox. Enable `kit` on native to see both the Kit-owned English fallback and a
-placeholder supplied by the app in the selected language.
+inbox. Enable `kit` on native to see both Kit-owned copy and a placeholder supplied by
+the app in the selected language.
 
 ## Implementation and evidence
 
@@ -37,7 +37,8 @@ placeholder supplied by the app in the selected language.
   “Choose a folder”. Kit 0.9 has neither a `pt-PT` nor a `pt` catalogue. That
   gap covers Select, Calendar, list search, attachment actions and the other
   Kit-owned copy in the pinned catalogue. Its Portuguese translations are tagged
-  `pt-BR`. Separately, the source asks for `Combobox.placeholder` while the
+  `pt-BR`. After review, the adapter maps `pt-PT` to Kit's `pt-BR` rather than
+  English; that change was not re-captured at runtime. Separately, the source asks for `Combobox.placeholder` while the
   catalogue entry is spelled `ComboBox.placeholder`. This source mismatch was
   observed without exercising Combobox at runtime.
 
@@ -193,7 +194,9 @@ and carries the [Unicode license](../../examples/view/locales/LICENSE-UNICODE).
   coverage. The resolved locale is captured with the tree. Native platform
   screen-reader speech and language announcements were outside verification.
 - **#105** Retain the feature-gated one-way Kit adapter. The prototype pins the
-  Kit locale list and falls back to English if there is no exact or language
-  match. Prefer a Kit-supported catalogue inventory and audit cached strings in
-  other controls. The window wrapper and the existing counter retain their
-  current English copy. RTL layout remains in #103 and #106.
+  Kit locale list and tries the exact tag, the bare language, then a regional
+  sibling such as `pt-BR` for `pt-PT`, falling back to English only when Kit
+  has no catalogue in that language. Prefer a Kit-supported catalogue inventory
+  and audit cached strings in other controls. The window wrapper and the
+  existing counter retain their current English copy. RTL layout remains in
+  #103 and #106.

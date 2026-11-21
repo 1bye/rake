@@ -88,3 +88,14 @@ fn falls_back_for_missing_messages_and_displays_keys_on_errors() {
     assert!(translated.as_str().contains("Inês"));
     assert_eq!(translated.message_key(), "with-argument");
 }
+
+#[test]
+fn kit_uses_a_regional_sibling_before_english() {
+    let kit = |tag: &str| kit_locale(&tag.parse().unwrap());
+
+    assert_eq!(kit("pt-PT"), "pt-BR");
+    assert_eq!(kit("pt"), "pt-BR");
+    assert_eq!(kit("zh-TW"), "zh-TW");
+    assert_eq!(kit("en-GB"), "en");
+    assert_eq!(kit("fr"), "en");
+}
