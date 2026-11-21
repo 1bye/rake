@@ -15,24 +15,27 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::{ParagraphText, layout};
 
+type LinkInspector = dyn Fn(gpui::Stateful<gpui::Div>, Option<&FocusHandle>) -> AnyElement;
+type PointerGesture = Rc<Cell<Option<(Point<Pixels>, bool)>>>;
+
 pub(super) struct Link {
     pub range: Range<usize>,
     pub href: SharedString,
     pub id: ElementId,
     pub label: Option<SharedString>,
-    pub inspect: Rc<dyn Fn(gpui::Stateful<gpui::Div>, Option<&FocusHandle>) -> AnyElement>,
+    pub inspect: Rc<LinkInspector>,
 }
 
 #[derive(Default)]
 struct Retained {
     focus: HashMap<ElementId, FocusHandle>,
-    gesture: Rc<Cell<Option<(Point<Pixels>, bool)>>>,
+    gesture: PointerGesture,
 }
 
 pub(super) struct Frame {
     text: AnyElement,
     links: Vec<AnyElement>,
-    gesture: Rc<Cell<Option<(Point<Pixels>, bool)>>>,
+    gesture: PointerGesture,
 }
 
 pub(super) fn keyboard_activates(event: &gpui::KeyDownEvent) -> bool {
