@@ -836,6 +836,11 @@ impl View {
 }
 
 impl Element {
+    /// Whether this element starts an inline text flow.
+    pub fn composes_text(&self) -> bool {
+        self.resolved.composes_text()
+    }
+
     fn is_component(&self) -> bool {
         self.resolved == Tag::Component
     }

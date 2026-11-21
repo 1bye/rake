@@ -104,6 +104,31 @@ fn loop_rules_visit_branches_and_nested_loops() {
 }
 
 #[test]
+fn inline_loop_links_need_stable_keys() {
+    let markup = r#"<p>for item in items { <strong>if visible { match item { _ => { <a href="/">Home</a> } } }</strong> }</p>"#;
+    let diagnostics = check(markup);
+
+    assert_eq!(ids(&diagnostics), [INDEX]);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("requires an explicit stable id")
+    );
+
+    let positional = r#"<p>for (i, item) in items.enumerate() { <a id={i} href="/">Home</a> }</p>"#;
+
+    assert_eq!(ids(&check(positional)), [INDEX]);
+
+    for markup in [
+        r#"<p>for item in items { <a id={item.id} href="/">Home</a> }</p>"#,
+        r#"<p>for item in items { {item} } <a href="/">Home</a></p>"#,
+        r#"<div>for item in items { <p id={item.id}><a href="/">Home</a></p> }</div>"#,
+    ] {
+        assert!(check(markup).is_empty(), "{markup}");
+    }
+}
+
+#[test]
 fn component_slots_and_nested_view_macros_are_checked_once() {
     assert_eq!(
         ids(&check(

@@ -117,11 +117,13 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: INDEX,
-        agent_summary: Some("Never derive loop IDs from positions; use stable data keys."),
+        agent_summary: Some(
+            "Never derive loop IDs from positions; use stable data keys. Inline links inside loops need an explicit id.",
+        ),
         level: Level::Warn,
-        message: "loop item ID is derived from an enumerate index",
-        explanation: "Position changes when items are reordered or inserted, moving retained focus and state to another item. This syntax rule recognizes index bindings from enumerate(), including rev/skip/take/step_by/by_ref adapters. It checks direct IDs, tuples, casts, arithmetic, index methods and format! arguments/captures. Arbitrary calls and data lookups are opaque; identifier spelling alone never makes a value an index.",
-        fix: "replace the index in id with a stable data key, such as row.id",
+        message: "loop item needs a stable data ID",
+        explanation: "Position changes when items are reordered or inserted, moving retained focus and state to another item. Inline links inside a paragraph or heading loop must supply an explicit id because the generated ID would be shared by every iteration. This syntax rule recognizes index bindings from enumerate(), including rev/skip/take/step_by/by_ref adapters. It checks direct IDs, tuples, casts, arithmetic, index methods and format! arguments/captures. Arbitrary calls and data lookups are opaque; identifier spelling alone never makes a value an index.",
+        fix: "set id to a stable data key, such as row.id",
         before: "for (index, row) in rows.iter().enumerate() { <div id={(\"row\", index)}/> }",
         after: "for row in &rows { <div id={(\"row\", row.id)}/> }",
     },

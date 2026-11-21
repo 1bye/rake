@@ -18,3 +18,8 @@ Root copy preserves selected leading/trailing whitespace instead of trimming the
 Web also binds Command-C alongside Control-C, since the Wasm target’s OS is not the browser host OS.
 
 The workspace dependency also names this directory directly so external path and Git consumers retain the selection APIs; Cargo does not inherit dependency-root patches.
+
+**Release hold:** rake-ui must not be published until gpui-base ships these APIs
+and Rake upgrades to that release. Publishing drops the workspace path and uses
+the crates.io version of gpui-base, which currently lacks both methods.
+Re-enable publishing in `crates/rake-ui/Cargo.toml` after the upgrade.

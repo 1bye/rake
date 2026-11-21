@@ -43,19 +43,40 @@ pub fn classify_href(href: &str) -> HrefKind {
     }
 }
 
-type Navigate = Rc<dyn Fn(&str)>;
+type Navigate = Rc<dyn Fn(&str, &mut App)>;
 
 #[derive(Default)]
 struct LinkRoutes(HashMap<WindowId, Navigate>);
 
 impl Global for LinkRoutes {}
 
-/// Installs a weak router navigator for this physical window.
+/// The first router rendered in a physical window owns its links until close.
 #[doc(hidden)]
-pub fn install_link_router(window: &Window, cx: &mut App, navigate: impl Fn(&str) + 'static) {
-    cx.default_global::<LinkRoutes>()
+pub fn install_link_router(
+    window: &Window,
+    cx: &mut App,
+    navigate: impl Fn(&str, &mut App) + 'static,
+) {
+    let window_id = window.window_handle().window_id();
+
+    if cx
+        .try_global::<LinkRoutes>()
+        .is_some_and(|routes| routes.0.contains_key(&window_id))
+    {
+        return;
+    }
+
+    if !cx.has_global::<LinkRoutes>() {
+        cx.set_global(LinkRoutes::default());
+        cx.on_window_closed(|cx, window_id| {
+            cx.global_mut::<LinkRoutes>().0.remove(&window_id);
+        })
+        .detach();
+    }
+
+    cx.global_mut::<LinkRoutes>()
         .0
-        .insert(window.window_handle().window_id(), Rc::new(navigate));
+        .insert(window_id, Rc::new(navigate));
 }
 
 pub(super) fn activate(href: &SharedString, window: &mut Window, cx: &mut App) {
@@ -66,7 +87,7 @@ pub(super) fn activate(href: &SharedString, window: &mut Window, cx: &mut App) {
                 .and_then(|routes| routes.0.get(&window.window_handle().window_id()))
                 .cloned()
             {
-                navigate(href);
+                navigate(href, cx);
             }
         }
         HrefKind::External => cx.open_url(href),
@@ -77,6 +98,36 @@ pub(super) fn activate(href: &SharedString, window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(feature = "test-support", not(target_family = "wasm")))]
+    #[test]
+    fn first_router_owns_each_window_until_close() {
+        use gpui::AppContext as _;
+        use std::cell::Cell;
+
+        let mut cx = gpui::TestAppContext::single();
+        let visits = Rc::new(Cell::new(0));
+        let weak_visits = Rc::downgrade(&visits);
+        let window = cx.add_window(|_, _| gpui::EmptyView);
+
+        cx.update_window(window.into(), |_, window, cx| {
+            let visits = visits.clone();
+
+            install_link_router(window, cx, move |_, _| visits.set(visits.get() + 1));
+            install_link_router(window, cx, |_, _| {
+                panic!("nested router replaced the owner")
+            });
+            activate(&"/next".into(), window, cx);
+        })
+        .unwrap();
+
+        assert_eq!(visits.get(), 1);
+        drop(visits);
+
+        cx.update_window(window.into(), |_, window, _| window.remove_window())
+            .unwrap();
+        assert!(weak_visits.upgrade().is_none());
+    }
 
     #[test]
     fn href_policy_rejects_unsafe_and_ambiguous_destinations() {

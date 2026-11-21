@@ -275,6 +275,32 @@ fn paragraphs_compose_inline_content_and_reject_layout_or_interactive_children()
 }
 
 #[test]
+fn inline_loop_links_require_explicit_ids() {
+    for source in [
+        r#"<p>for item in items { <a href="/">"Home"</a> }</p>"#,
+        r#"<h2>for item in items { <strong>if visible { match item { _ => { <a href="/">"Home"</a> } } }</strong> }</h2>"#,
+    ] {
+        let error = expand(source).expect_err(source);
+
+        assert!(
+            error
+                .to_string()
+                .contains("inline <a> in a for loop requires an explicit stable id")
+        );
+    }
+
+    for source in [
+        r#"<p>for item in items { <span><a id={item.id} href="/">"Home"</a></span> }</p>"#,
+        r#"<p>for label in labels { {label} } <a href="/">"Home"</a></p>"#,
+        r#"<div>for item in items { <p id={item.id}><a href="/">"Home"</a></p> }</div>"#,
+    ] {
+        let expanded = expand(source).expect(source);
+
+        syn::parse2::<syn::Expr>(expanded).expect("one view expression");
+    }
+}
+
+#[test]
 fn expansion_snapshots() {
     let mut fixtures = vec![
         ("containers", r#"<section id="root" class="flex flex-col"><div/><span>{label}</span></section>"#.to_owned()),

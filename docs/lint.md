@@ -138,7 +138,7 @@ To add a deep rule:
 | `view-button-label` | warn | button content has no automatic accessible label |
 | `view-link-label` | warn | link has no accessible name |
 | `view-image-alt` | deny | image is missing alt text |
-| `view-loop-index-id` | warn | loop item ID is derived from an enumerate index |
+| `view-loop-index-id` | warn | loop item needs a stable data ID |
 | `gpui-dropped-task` | warn | GPUI task is immediately dropped (deep) |
 | `gpui-render-new` | warn | entity allocated during render (deep) |
 | `gpui-reentrant-update` | warn | entity updated inside its own update (deep) |

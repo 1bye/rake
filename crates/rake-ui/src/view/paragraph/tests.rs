@@ -207,7 +207,7 @@ mod selection_frames {
             crate::init(cx);
             let visits = self.visits.clone();
 
-            crate::view::install_link_router(window, cx, move |_| visits.set(visits.get() + 1));
+            crate::view::install_link_router(window, cx, move |_, _| visits.set(visits.get() + 1));
             let mut content = ParagraphContent::default();
 
             content.push(" alpha ", &RunStyle::default());

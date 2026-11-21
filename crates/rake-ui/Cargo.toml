@@ -5,7 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = ["crates-io"]
+# Release hold until gpui-base ships the selectable text APIs and Rake upgrades.
+publish = false
 description = "GPUI view helpers, themes and overlays"
 
 [lints]
