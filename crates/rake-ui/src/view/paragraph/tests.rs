@@ -183,3 +183,261 @@ mod frames {
         }
     }
 }
+
+#[cfg(all(feature = "test-support", not(target_family = "wasm")))]
+mod selection_frames {
+    use super::*;
+    use gpui::{Context, Modifiers, MouseButton, Render, TestAppContext, prelude::*};
+
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+
+    struct Host {
+        visits: Rc<Cell<usize>>,
+        link_text: &'static str,
+        width: f32,
+        max_lines: Option<usize>,
+        measured: Rc<RefCell<layout::ParagraphLayout>>,
+    }
+
+    impl Render for Host {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            crate::init(cx);
+            let visits = self.visits.clone();
+
+            crate::view::install_link_router(window, cx, move |_| visits.set(visits.get() + 1));
+            let mut content = ParagraphContent::default();
+
+            content.push(" alpha ", &RunStyle::default());
+            let start = content.text_len();
+
+            content.push(
+                self.link_text,
+                &RunStyle::default().highlight(gpui::FontWeight::BOLD.into()),
+            );
+            content.link(start, "/next", "next", None, |link, _| {
+                link.into_any_element()
+            });
+            content.push(" omega ", &RunStyle::default());
+            let mut text = content.finish().select_text(true);
+
+            text.layout = self.measured.clone();
+
+            gpui::div().size_full().child(
+                gpui::div()
+                    .w(gpui::px(self.width))
+                    .whitespace_normal()
+                    .when_some(self.max_lines, |node, lines| {
+                        node.text_ellipsis().line_clamp(lines)
+                    })
+                    .child(text),
+            )
+        }
+    }
+
+    #[test]
+    fn plain_click_follows_link_but_drag_selects_visible_runs() {
+        let mut cx = TestAppContext::single();
+        let visits = Rc::new(Cell::new(0));
+        let measured = Rc::new(RefCell::new(layout::ParagraphLayout::default()));
+
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            crate::init(cx);
+            let view = cx.new(|_| Host {
+                visits: visits.clone(),
+                link_text: "link",
+                width: 240.,
+                max_lines: None,
+                measured: measured.clone(),
+            });
+
+            gpui_base::Root::new(view, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let position = {
+            let measured = measured.borrow();
+
+            measured.lines[0]
+                .position_for_index(8, measured.line_height)
+                .unwrap()
+                + gpui::point(gpui::px(1.), measured.line_height / 2.)
+        };
+
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+        assert_eq!(visits.get(), 1);
+        cx.simulate_keystrokes("enter");
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+        assert_eq!(visits.get(), 2);
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            position + gpui::point(gpui::px(5.), gpui::px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            position + gpui::point(gpui::px(5.), gpui::px(0.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        assert_eq!(visits.get(), 2);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let start = gpui::point(gpui::px(1.), position.y);
+
+        cx.simulate_mouse_move(start, None, Modifiers::default());
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            gpui::point(gpui::px(230.), position.y),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            gpui::point(gpui::px(230.), position.y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                gpui_base::TextSelection::selected_text(window, cx),
+                " alpha link omega "
+            );
+        });
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        });
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(" alpha link omega ".into())
+            )
+        });
+    }
+
+    #[test]
+    fn wrapped_link_activates_on_its_second_text_row() {
+        let mut cx = TestAppContext::single();
+        let visits = Rc::new(Cell::new(0));
+        let measured = Rc::new(RefCell::new(layout::ParagraphLayout::default()));
+
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            crate::init(cx);
+            let view = cx.new(|_| Host {
+                visits: visits.clone(),
+                measured: measured.clone(),
+                link_text: "one two three four five six seven",
+                width: 120.,
+                max_lines: None,
+            });
+
+            gpui_base::Root::new(view, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let position = {
+            let measured = measured.borrow();
+            let line = &measured.lines[0];
+
+            assert!(line.wrap_boundaries.len() >= 2);
+            let boundary = &line.wrap_boundaries[0];
+            let index = line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+
+            line.position_for_index(index + 1, measured.line_height)
+                .unwrap()
+                + gpui::point(gpui::px(1.), measured.line_height / 2.)
+        };
+
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+        assert_eq!(visits.get(), 1);
+        cx.simulate_keystrokes("enter");
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+        assert_eq!(visits.get(), 2);
+        let blank = gpui::point(gpui::px(230.), position.y);
+
+        cx.simulate_mouse_down(blank, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(blank, MouseButton::Left, Modifiers::default());
+        assert_eq!(visits.get(), 2);
+    }
+
+    #[test]
+    fn truncated_selection_copies_only_painted_text() {
+        let mut cx = TestAppContext::single();
+        let measured = Rc::new(RefCell::new(layout::ParagraphLayout::default()));
+
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            crate::init(cx);
+            let view = cx.new(|_| Host {
+                visits: Rc::new(Cell::new(0)),
+                measured: measured.clone(),
+                link_text: "one two three four five six seven",
+                width: 120.,
+                max_lines: Some(1),
+            });
+
+            gpui_base::Root::new(view, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let visible = measured
+            .borrow()
+            .lines
+            .iter()
+            .map(|line| line.text.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(visible.len() < " alpha one two three four five six seven omega ".len());
+        let start = gpui::point(gpui::px(1.), measured.borrow().line_height / 2.);
+        let end = gpui::point(gpui::px(230.), start.y);
+
+        cx.simulate_mouse_move(start, None, Modifiers::default());
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(gpui_base::TextSelection::selected_text(window, cx), visible);
+        });
+    }
+}
+
+#[test]
+fn links_split_identical_styles_and_reject_unsafe_hrefs() {
+    let mut content = ParagraphContent::default();
+    let style = RunStyle::default();
+
+    content.push("one ", &style);
+    content.push("two", &style);
+    content.link(4, "/two", "two", None, |link, _| link.into_any_element());
+    content.push(" three", &style);
+    assert_eq!(
+        content
+            .runs
+            .iter()
+            .map(|run| run.range.clone())
+            .collect::<Vec<_>>(),
+        [0..4, 4..7, 7..13]
+    );
+    content.link(0, "javascript:alert(1)", "unsafe", None, |link, _| {
+        link.into_any_element()
+    });
+    assert_eq!(content.links.len(), 1);
+}

@@ -24,6 +24,7 @@ pub struct SelectableText {
     document_order: u64,
     text_style: Option<TextStyleRefinement>,
     selection_color: Option<Hsla>,
+    selectable: bool,
 }
 
 impl SelectableText {
@@ -50,7 +51,20 @@ impl SelectableText {
             document_order: 0,
             text_style: None,
             selection_color: None,
+            selectable: true,
         }
+    }
+
+    /// Supplies already styled text while retaining the shared selection engine.
+    pub fn styled(mut self, text: StyledText) -> Self {
+        self.styled_text = text;
+        self
+    }
+
+    /// Disables selection registration while preserving the styled layout.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
     }
 
     /// Places this run in reading order among the others sharing its handle.
@@ -192,7 +206,9 @@ impl Element for SelectableText {
             .with_document_order(self.document_order)
             .with_text_bounds(vec![bounds])
             .with_rendered_element(handle, window, cx);
-        handle.register(registration, window, cx);
+        if self.selectable {
+            handle.register(registration, window, cx);
+        }
         hitbox
     }
 
@@ -221,7 +237,13 @@ impl Element for SelectableText {
         let color = self
             .selection_color
             .unwrap_or_else(|| crate::Theme::global(cx).tokens.colors.selection);
-        for range in projection.ranges().iter().flatten().cloned() {
+        for range in projection
+            .ranges()
+            .iter()
+            .flatten()
+            .filter(|_| self.selectable)
+            .cloned()
+        {
             Self::paint_selection(&layout, range, color, window);
         }
         self.styled_text.paint(

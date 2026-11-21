@@ -522,7 +522,7 @@ fn boolean_attribute(tag: Tag, name: &str) -> bool {
     tag == Tag::Component
         || matches!(
             name,
-            "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
+            "select-text" | "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
         )
 }
 
@@ -996,8 +996,10 @@ impl Element {
 
                 builder
             }
-            Tag::Paragraph => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
-                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
+            Tag::Paragraph | Tag::Link => {
+                quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
+                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph))
+            }
             Tag::Heading(level) => {
                 let level = level as usize;
 
@@ -1121,6 +1123,23 @@ impl Element {
                 continue;
             }
 
+            if attribute.name == "class"
+                && !matches!(self.resolved, Tag::Paragraph | Tag::Heading(_))
+                && matches!(value, Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(text), .. }) if text.value().split_whitespace().any(|class| class == "select-text"))
+            {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "select-text belongs on paragraphs and headings",
+                ));
+            }
+
+            if attribute.name == "class:select-text" {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "use select-text={condition} on paragraphs and headings",
+                ));
+            }
+
             if attribute.name == "class" || attribute.name.starts_with("class:") {
                 let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
                     utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?
@@ -1175,6 +1194,7 @@ impl Element {
                 "src" if self.resolved == Tag::Image => continue,
                 "path" if self.resolved == Tag::Svg => continue,
                 "alt" if self.resolved == Tag::Image => quote!(.aria_label(#value)),
+                "aria-label" if self.resolved == Tag::Link => TokenStream::new(),
                 "aria-label" => quote!(.aria_label(#value)),
                 "aria-description" => quote!(.aria_description(#value)),
                 "aria-keyshortcuts" => quote!(.aria_keyshortcuts(#value)),
@@ -1186,6 +1206,10 @@ impl Element {
 
                     quote!(.track_scroll(#value))
                 }
+                "select-text" if matches!(self.resolved, Tag::Paragraph | Tag::Heading(_)) => {
+                    TokenStream::new()
+                }
+                "href" if self.resolved == Tag::Link => TokenStream::new(),
                 "wrap" if self.resolved.composes_text() => quote!(.when_else(#value,
                     |#mapped| #mapped.whitespace_normal(),
                     |#mapped| #mapped.whitespace_nowrap())),

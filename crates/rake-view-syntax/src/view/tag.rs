@@ -9,6 +9,7 @@ pub(super) const PARAGRAPH_CONTENT: &str = "paragraphs accept text, span, strong
 pub(super) enum Tag {
     Container(Option<&'static str>),
     Paragraph,
+    Link,
     Heading(u8),
     List,
     ListItem,
@@ -56,6 +57,7 @@ impl Tag {
             "aside" => Self::Container(Some("Complementary")),
             "article" => Self::Container(Some("Article")),
             "p" => Self::Paragraph,
+            "a" => Self::Link,
             "h1" => Self::Heading(1),
             "h2" => Self::Heading(2),
             "h3" => Self::Heading(3),
@@ -75,13 +77,14 @@ impl Tag {
     }
 
     pub fn is_inline_name(path: &syn::Path) -> bool {
-        ["span", "strong", "em", "br"]
+        ["span", "strong", "em", "br", "a"]
             .iter()
             .any(|name| path.is_ident(name))
     }
 
     pub fn required_attributes(self) -> &'static [(&'static str, &'static str)] {
         match self {
+            Self::Link => &[("href", "a requires href")],
             Self::Image => &[
                 ("src", "img requires src"),
                 ("alt", "img requires alt text"),
@@ -103,7 +106,7 @@ impl Tag {
     }
 
     pub fn composes_text(self) -> bool {
-        matches!(self, Self::Paragraph | Self::Heading(_))
+        matches!(self, Self::Paragraph | Self::Heading(_) | Self::Link)
     }
 
     pub fn supports_disabled(self) -> bool {

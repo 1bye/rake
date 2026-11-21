@@ -136,6 +136,7 @@ To add a deep rule:
 | `view-theme-literal` | warn | literal color or design size bypasses the installed theme |
 | `release-debug-assertions` | warn | debug assertions are explicitly enabled in a release profile |
 | `view-button-label` | warn | button content has no automatic accessible label |
+| `view-link-label` | warn | link has no accessible name |
 | `view-image-alt` | deny | image is missing alt text |
 | `view-loop-index-id` | warn | loop item ID is derived from an enumerate index |
 | `gpui-dropped-task` | warn | GPUI task is immediately dropped (deep) |

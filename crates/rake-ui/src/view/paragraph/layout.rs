@@ -15,7 +15,7 @@ use unicode_segmentation::UnicodeSegmentation as _;
 #[derive(Default)]
 pub struct ParagraphLayout {
     pub(super) lines: Vec<WrappedLine>,
-    line_height: Pixels,
+    pub(super) line_height: Pixels,
     align: TextAlign,
 }
 
@@ -128,7 +128,7 @@ fn fits(lines: &[WrappedLine], limits: &TextLimits<'_>) -> bool {
         .is_none_or(|width| lines.iter().all(|line| line.width() <= width))
 }
 
-fn prefix_runs(runs: &[TextRun], end: usize, affix_len: usize) -> Vec<TextRun> {
+pub(super) fn prefix_runs(runs: &[TextRun], end: usize, affix_len: usize) -> Vec<TextRun> {
     let mut result = Vec::new();
     let mut start = 0;
 

@@ -1200,3 +1200,24 @@ fn deep_file_suppressions_defer_unused_checks_until_the_deep_tier_runs() {
 
     assert!(used.is_empty());
 }
+
+#[test]
+fn links_require_visible_text_or_explicit_name() {
+    for markup in [
+        r#"<a href="/"/>"#,
+        r#"<a href="/">" "</a>"#,
+        r#"<a href="/" aria-label=" "/>"#,
+        r#"<p><a href="/">{title}</a></p>"#,
+    ] {
+        assert_eq!(ids(&check(markup)), [catalogue::LINK], "{markup}");
+    }
+
+    for markup in [
+        r#"<a href="/">Home</a>"#,
+        r#"<p><a href="/"><strong>Home</strong></a></p>"#,
+        r#"<a href="/" aria-label="Home">{title}</a>"#,
+        r#"<a href="/" aria-label={title}/>"#,
+    ] {
+        assert!(check(markup).is_empty(), "{markup}");
+    }
+}

@@ -36,6 +36,7 @@ Deep GPUI rules require `rake lint --deep` and the pinned nightly plus cargo-dyl
 | `view-theme-literal` | warn | literal color or design size bypasses the installed theme |
 | `release-debug-assertions` | warn | debug assertions are explicitly enabled in a release profile |
 | `view-button-label` | warn | button content has no automatic accessible label |
+| `view-link-label` | warn | link has no accessible name |
 | `view-image-alt` | deny | image is missing alt text |
 | `view-loop-index-id` | warn | loop item ID is derived from an enumerate index |
 | `gpui-dropped-task` | warn | GPUI task is immediately dropped (deep) |
@@ -128,6 +129,26 @@ After:
 ```text
 <button aria-label={title.clone()}>{title.clone()}</button>
 <button aria-label="Search">{icon}</button>
+```
+
+## view-link-label (warn)
+
+link has no accessible name
+
+Links need nonempty literal text or an explicit aria-label. Inline text styling preserves a literal name; opaque dynamic content needs an explicit label.
+
+What to write instead: add visible text or aria-label describing the destination
+
+Before:
+
+```text
+<a href="/"/>
+```
+
+After:
+
+```text
+<a href="/">Home</a>
 ```
 
 ## view-image-alt (deny)

@@ -637,21 +637,45 @@ Independent local errors are reported together, including invalid attributes, ut
 
 On failure, valid parts keep their GPUI builder context in unreachable generated code, so editor tooling still type-checks expressions and listeners. Invalid component properties and loop roots are omitted to avoid unrelated errors. This code never runs, and erroneous markup never builds.
 
+## Links and selectable text
+
+Paragraphs and headings accept `select-text` (or `class="select-text"`) to opt into
+Base’s window selection and copy. Selection spans styled inline runs and copies
+the visible text, including truncation affixes.
+
+```rust,ignore
+rake::view! {
+    <p select-text>"Read "<a href="https://example.org/">"the guide"</a>" or copy this paragraph."</p>
+}
+```
+
+`<a href>` also works outside paragraphs. Links expose their visible name (or
+`aria-label`), take Tab focus and activate with Enter. A pointer drag selects text;
+a plain click follows the link. Link text uses the semantic `primary` color;
+selection and focused-link backgrounds use `selection`, in light and dark themes.
+
+A single leading slash identifies an app route, dispatched through the current
+window’s router. External links allow `http`, `https`, `mailto` and `tel` only.
+Protocol-relative URLs, relative paths, whitespace, control characters, backslashes
+and other schemes (including `javascript`, `data` and `file`) are rejected on both
+targets. Route links require a routed application. Inline links accept `href`,
+`id` and `aria-label`; give repeated links stable data IDs.
+
 ## Current limits
 
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed markup are compile errors.
 
 Not implemented in this version:
 
-- Input controls, links and forms.
-- Automatic shortcut labels, selectable text and interactive inline links.
+- Input controls and forms.
+- Automatic shortcut labels.
 - `aria-labelledby` and the complete ARIA vocabulary.
 - General focus traps outside the overlay controls.
 - CSS selectors or cascade, and HTML entity decoding.
 - Fragments, explicit generic arguments in component tags and dedicated slot syntax.
 - Automatic signal tracking and markup hot reload.
 
-Inline text accepts checked text-run styles and theme colors and fonts, and rejects conditional class attributes, events and IDs. Literal class branches are supported. SVG leaves use their restricted attribute set, so wrap them for interaction and identity. Existing GPUI components remain available through `{expression}`. Raster images follow your asset and HTTP configuration, and SVG paths use the GPUI asset source.
+Inline spans accept checked text-run styles and theme colors and fonts, and reject conditional class attributes, events and IDs. Inline links accept their own stable IDs and accessible labels. Literal class branches are supported. SVG leaves use their restricted attribute set, so wrap them for interaction and identity. Existing GPUI components remain available through `{expression}`. Raster images follow your asset and HTTP configuration, and SVG paths use the GPUI asset source.
 
 Every rendered macro-authored element, component or entity mount, and ordinary text or expression child automatically creates a development inspection boundary, so no `.inspect(...)` calls are needed. An existing `.inspect("name")` on a built-in root renames that boundary without adding another.
 

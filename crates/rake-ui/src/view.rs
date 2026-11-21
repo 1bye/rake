@@ -1,7 +1,10 @@
 //! Accessible text conversion and image delegation for views.
 
 mod button;
+mod link;
 mod paragraph;
+
+pub use link::{HrefKind, classify_href, install_link_router};
 
 pub use button::{Button, button, button_base};
 pub use paragraph::{ParagraphContent, ParagraphText, RunStyle};
