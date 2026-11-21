@@ -90,16 +90,21 @@ impl ParagraphContent {
         + 'static,
     ) {
         let href = href.into();
+
         if super::link::classify_href(&href) != super::link::HrefKind::Rejected {
             let mut split = Vec::new();
+
             for run in self.runs.drain(..) {
                 let mut boundaries = vec![run.range.start, run.range.end];
+
                 for boundary in [start, self.text.len()] {
                     if run.range.start < boundary && boundary < run.range.end {
                         boundaries.push(boundary);
                     }
                 }
+
                 boundaries.sort_unstable();
+
                 for pair in boundaries.windows(2) {
                     split.push(Run {
                         range: pair[0]..pair[1],
@@ -107,6 +112,7 @@ impl ParagraphContent {
                     });
                 }
             }
+
             self.runs = split;
             self.links.push(interactive::Link {
                 range: start..self.text.len(),
@@ -146,6 +152,7 @@ impl ParagraphText {
     /// Enables Base's window selection for this composed text.
     pub fn select_text(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
+
         self
     }
 
@@ -212,6 +219,7 @@ impl Element for ParagraphText {
                         wavy: false,
                     });
                 }
+
                 if let Some(family) = &run.style.family {
                     text_run.font.family = family.clone();
                 }

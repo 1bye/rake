@@ -753,5 +753,6 @@ fn links_and_selectable_text_expand() {
     ] {
         syn::parse2::<syn::Expr>(expand(source).expect("link markup")).expect("valid Rust");
     }
+
     assert!(expand(r#"<a>missing href</a>"#).is_err());
 }

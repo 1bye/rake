@@ -1211,6 +1211,7 @@ fn links_require_visible_text_or_explicit_name() {
     ] {
         assert_eq!(ids(&check(markup)), [catalogue::LINK], "{markup}");
     }
+
     for markup in [
         r#"<a href="/">Home</a>"#,
         r#"<p><a href="/"><strong>Home</strong></a></p>"#,

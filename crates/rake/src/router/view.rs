@@ -458,6 +458,7 @@ impl<R: Route> RouteOutlet<R> {
 impl<R: Route> RenderOnce for RouteOutlet<R> {
     fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let link_navigator = self.navigator.clone().for_window(self.window);
+
         rake_ui::view::install_link_router(window, cx, move |href| {
             if let Ok(destination) = R::from_uri(href) {
                 let _ = link_navigator.open(destination, super::OpenTarget::CurrentTab);
@@ -928,6 +929,7 @@ impl<R: Route> Render for Workspace<R> {
         let snapshot = self.router.presented_snapshot(self.window);
         let navigator = self.router.navigator().for_window(self.window);
         let link_navigator = navigator.clone();
+
         rake_ui::view::install_link_router(window, cx, move |href| {
             if let Ok(destination) = R::from_uri(href) {
                 let _ = link_navigator.open(destination, super::OpenTarget::CurrentTab);

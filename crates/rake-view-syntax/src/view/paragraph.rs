@@ -32,19 +32,25 @@ impl Element {
         );
 
         let mut children = inline_children(&self.children, &content, &style, rake, next)?;
+
         if self.resolved == Tag::Link {
             let href = self.required_attribute("href")?.expression()?;
+
             let label = self
                 .attribute("aria-label")
                 .map(|a| a.expression())
                 .transpose()?
                 .map_or_else(|| quote!(None), |label| quote!(Some((#label).into())));
+
             let id = quote!(#rake::gpui::Element::id(&#node).expect("link has an identity"));
             let inspect = link_inspector(self, rake, index);
+
             children.extend(quote!(#content.link(0, #href, #id, #label, #inspect);));
         }
+
         let selectable = self.attribute("select-text").map(|a| a.expression()).transpose()?.map_or_else(|| {
             let enabled = self.attribute("class").and_then(|a| a.expression().ok()).is_some_and(|value| matches!(value, Expr::Lit(syn::ExprLit {lit: Lit::Str(text), ..}) if text.value().split_whitespace().any(|class| class == "select-text")));
+
             quote!(#enabled)
         }, |value| quote!(#value));
 
@@ -156,8 +162,10 @@ pub(super) fn inline_element(
 
     if element.tag.is_ident("a") {
         let link_index = *next;
+
         *next += 1;
         let href = element.required_attribute("href")?.expression()?;
+
         for attribute in &element.attributes {
             if !matches!(attribute.name.as_str(), "href" | "id" | "aria-label") {
                 return Err(syn::Error::new(
@@ -166,6 +174,7 @@ pub(super) fn inline_element(
                 ));
             }
         }
+
         let id = element
             .attribute("id")
             .map(|a| a.expression())
@@ -174,17 +183,21 @@ pub(super) fn inline_element(
                 || quote!(#rake::gpui::ElementId::from(("rake::view:inline-link", #link_index))),
                 |id| quote!(#id),
             );
+
         let label = element
             .attribute("aria-label")
             .map(|a| a.expression())
             .transpose()?
             .map_or_else(|| quote!(None), |label| quote!(Some((#label).into())));
+
         let children = inline_children(&element.children, content, inherited, rake, next)?;
         let inspect = link_inspector(element, rake, link_index);
+
         return Ok(
             quote!({ let __rake_link_start = #content.text_len(); #children #content.link(__rake_link_start, #href, #id, #label, #inspect); }),
         );
     }
+
     if element.tag.is_ident("br") {
         if !element.attributes.is_empty() || !element.children.is_empty() {
             return Err(syn::Error::new(
@@ -383,6 +396,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
 
 fn link_inspector(element: &Element, rake: &TokenStream, index: usize) -> TokenStream {
     let definition = element.inspection_definition(rake, index);
+
     quote!(|__rake_link, __rake_focus| #rake::__private::inspection!(__rake_link,
         |__rake_link| #rake::__private::view_inspect(__rake_link, #definition, true).when_some(__rake_focus, |element, focus| element.focus_handle(focus)).into_any_element(),
         |__rake_link| __rake_link.into_any_element()))

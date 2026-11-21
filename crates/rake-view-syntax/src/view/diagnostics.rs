@@ -198,6 +198,7 @@ impl Element {
 
         if inline {
             let dummy = format_ident!("__rake_probe", span = Span::mixed_site());
+
             super::paragraph::inline_element(&probe, &dummy, &dummy, rake, &mut 0)?;
         } else {
             probe.expand(rake, &mut 0)?;

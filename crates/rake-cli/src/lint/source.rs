@@ -97,6 +97,7 @@ impl Checker<'_> {
                         _ => true,
                     }
             });
+
             if !explicit && !link_text(&element.children) {
                 self.emit(LINK, element.tag.span());
             }

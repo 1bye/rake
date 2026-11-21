@@ -23,15 +23,19 @@ pub fn classify_href(href: &str) -> HrefKind {
     {
         return HrefKind::Rejected;
     }
+
     if href.starts_with('/') && !href.starts_with("//") {
         return HrefKind::Route;
     }
+
     let Some((scheme, rest)) = href.split_once(':') else {
         return HrefKind::Rejected;
     };
+
     if rest.is_empty() {
         return HrefKind::Rejected;
     }
+
     match scheme.to_ascii_lowercase().as_str() {
         "http" | "https" if rest.starts_with("//") && rest.len() > 2 => HrefKind::External,
         "mailto" | "tel" => HrefKind::External,
@@ -40,8 +44,10 @@ pub fn classify_href(href: &str) -> HrefKind {
 }
 
 type Navigate = Rc<dyn Fn(&str)>;
+
 #[derive(Default)]
 struct LinkRoutes(HashMap<WindowId, Navigate>);
+
 impl Global for LinkRoutes {}
 
 /// Installs a weak router navigator for this physical window.
@@ -71,11 +77,13 @@ pub(super) fn activate(href: &SharedString, window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn href_policy_rejects_unsafe_and_ambiguous_destinations() {
         for href in ["/", "/notes/42?q=a#b"] {
             assert_eq!(classify_href(href), HrefKind::Route);
         }
+
         for href in [
             "https://example.org/",
             "HTTP://example.org",
@@ -84,6 +92,7 @@ mod tests {
         ] {
             assert_eq!(classify_href(href), HrefKind::External);
         }
+
         for href in [
             "",
             "//evil.org",

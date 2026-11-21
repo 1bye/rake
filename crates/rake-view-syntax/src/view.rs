@@ -1132,12 +1132,14 @@ impl Element {
                     "select-text belongs on paragraphs and headings",
                 ));
             }
+
             if attribute.name == "class:select-text" {
                 return Err(syn::Error::new(
                     attribute.span,
                     "use select-text={condition} on paragraphs and headings",
                 ));
             }
+
             if attribute.name == "class" || attribute.name.starts_with("class:") {
                 let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
                     utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?

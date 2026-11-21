@@ -188,6 +188,7 @@ mod frames {
 mod selection_frames {
     use super::*;
     use gpui::{Context, Modifiers, MouseButton, Render, TestAppContext, prelude::*};
+
     use std::{
         cell::{Cell, RefCell},
         rc::Rc,
@@ -200,14 +201,18 @@ mod selection_frames {
         max_lines: Option<usize>,
         measured: Rc<RefCell<layout::ParagraphLayout>>,
     }
+
     impl Render for Host {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             crate::init(cx);
             let visits = self.visits.clone();
+
             crate::view::install_link_router(window, cx, move |_| visits.set(visits.get() + 1));
             let mut content = ParagraphContent::default();
+
             content.push(" alpha ", &RunStyle::default());
             let start = content.text_len();
+
             content.push(
                 self.link_text,
                 &RunStyle::default().highlight(gpui::FontWeight::BOLD.into()),
@@ -217,7 +222,9 @@ mod selection_frames {
             });
             content.push(" omega ", &RunStyle::default());
             let mut text = content.finish().select_text(true);
+
             text.layout = self.measured.clone();
+
             gpui::div().size_full().child(
                 gpui::div()
                     .w(gpui::px(self.width))
@@ -235,6 +242,7 @@ mod selection_frames {
         let mut cx = TestAppContext::single();
         let visits = Rc::new(Cell::new(0));
         let measured = Rc::new(RefCell::new(layout::ParagraphLayout::default()));
+
         let (_, cx) = cx.add_window_view(|window, cx| {
             crate::init(cx);
             let view = cx.new(|_| Host {
@@ -244,18 +252,22 @@ mod selection_frames {
                 max_lines: None,
                 measured: measured.clone(),
             });
+
             gpui_base::Root::new(view, window, cx)
         });
+
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
         let position = {
             let measured = measured.borrow();
+
             measured.lines[0]
                 .position_for_index(8, measured.line_height)
                 .unwrap()
                 + gpui::point(gpui::px(1.), measured.line_height / 2.)
         };
+
         cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
         assert_eq!(visits.get(), 1);
@@ -280,6 +292,7 @@ mod selection_frames {
             window.draw(cx).clear(cx);
         });
         let start = gpui::point(gpui::px(1.), position.y);
+
         cx.simulate_mouse_move(start, None, Modifiers::default());
         cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_move(
@@ -311,11 +324,13 @@ mod selection_frames {
             )
         });
     }
+
     #[test]
     fn wrapped_link_activates_on_its_second_text_row() {
         let mut cx = TestAppContext::single();
         let visits = Rc::new(Cell::new(0));
         let measured = Rc::new(RefCell::new(layout::ParagraphLayout::default()));
+
         let (_, cx) = cx.add_window_view(|window, cx| {
             crate::init(cx);
             let view = cx.new(|_| Host {
@@ -325,21 +340,26 @@ mod selection_frames {
                 width: 120.,
                 max_lines: None,
             });
+
             gpui_base::Root::new(view, window, cx)
         });
+
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
         let position = {
             let measured = measured.borrow();
             let line = &measured.lines[0];
+
             assert!(line.wrap_boundaries.len() >= 2);
             let boundary = &line.wrap_boundaries[0];
             let index = line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+
             line.position_for_index(index + 1, measured.line_height)
                 .unwrap()
                 + gpui::point(gpui::px(1.), measured.line_height / 2.)
         };
+
         cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
         assert_eq!(visits.get(), 1);
@@ -349,14 +369,17 @@ mod selection_frames {
         });
         assert_eq!(visits.get(), 2);
         let blank = gpui::point(gpui::px(230.), position.y);
+
         cx.simulate_mouse_down(blank, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_up(blank, MouseButton::Left, Modifiers::default());
         assert_eq!(visits.get(), 2);
     }
+
     #[test]
     fn truncated_selection_copies_only_painted_text() {
         let mut cx = TestAppContext::single();
         let measured = Rc::new(RefCell::new(layout::ParagraphLayout::default()));
+
         let (_, cx) = cx.add_window_view(|window, cx| {
             crate::init(cx);
             let view = cx.new(|_| Host {
@@ -366,8 +389,10 @@ mod selection_frames {
                 width: 120.,
                 max_lines: Some(1),
             });
+
             gpui_base::Root::new(view, window, cx)
         });
+
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
@@ -378,9 +403,11 @@ mod selection_frames {
             .map(|line| line.text.as_ref())
             .collect::<Vec<_>>()
             .join("\n");
+
         assert!(visible.len() < " alpha one two three four five six seven omega ".len());
         let start = gpui::point(gpui::px(1.), measured.borrow().line_height / 2.);
         let end = gpui::point(gpui::px(230.), start.y);
+
         cx.simulate_mouse_move(start, None, Modifiers::default());
         cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
@@ -396,6 +423,7 @@ mod selection_frames {
 fn links_split_identical_styles_and_reject_unsafe_hrefs() {
     let mut content = ParagraphContent::default();
     let style = RunStyle::default();
+
     content.push("one ", &style);
     content.push("two", &style);
     content.link(4, "/two", "two", None, |link, _| link.into_any_element());
