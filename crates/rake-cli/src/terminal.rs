@@ -548,6 +548,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         && args.get(1).is_some_and(|arg| arg == "message-key")
     {
         let role = option(&mut args, "--role")?;
+
         let window = option(&mut args, "--window")?
             .map(|window| window.parse())
             .transpose()?;
@@ -557,6 +558,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         }
 
         args[1] = "tree".into();
+
         Some((args.remove(2), role, window))
     } else {
         None
@@ -603,6 +605,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
                 };
 
                 pin = Some(page.presentation);
+
                 page.page
             } else {
                 let Reply::ElementPage(page) = query(
@@ -618,8 +621,10 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
                 };
 
                 pin = Some(page.snapshot.capture.clone());
+
                 page
             };
+
             let mut tree = page.snapshot;
 
             tree.elements.retain(|element| {

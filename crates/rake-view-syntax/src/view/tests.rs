@@ -755,6 +755,7 @@ fn preserves_explicit_translation_and_lowers_message_key() {
         </button>"#,
     )
     .unwrap();
+
     let tokens = output.to_string();
 
     syn::parse2::<syn::Expr>(output).unwrap();

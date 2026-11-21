@@ -1078,6 +1078,7 @@ impl Element {
                 {
                     let key = key.value();
                     let mut bytes = key.bytes();
+
                     bytes
                         .next()
                         .is_some_and(|first| first.is_ascii_alphabetic())
