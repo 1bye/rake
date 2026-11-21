@@ -155,6 +155,22 @@ pub struct ViewMetadata {
     pub tag: String,
     /// Authored style attributes in source order, including paragraph inline attributes.
     pub style_sources: Vec<StyleSource>,
+    #[doc = "Experimental component signals, captured only with devtools enabled."]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signals: Vec<SignalMetadata>,
+}
+
+#[doc = "Bounded inspection of one component-owned signal; opaque values need no Debug implementation."]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignalMetadata {
+    #[doc = "Authored binding name recorded by the component macro."]
+    pub name: String,
+    #[doc = "Reactive category, such as signal, memo, or resource."]
+    pub kind: String,
+    #[doc = "Rust storage type; not a stable wire type identifier."]
+    pub value_type: String,
+    #[doc = "A bounded preview for supported scalar and string values; otherwise absent."]
+    pub value: Option<Value>,
 }
 
 /// GPUI's current visual style sampled during paint, including inherited text.

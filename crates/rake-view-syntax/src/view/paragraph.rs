@@ -31,7 +31,14 @@ impl Element {
             span = Span::mixed_site()
         );
 
-        let children = inline_children(&self.children, &content, &style, rake, next)?;
+        let children = inline_children(
+            &self.children,
+            &content,
+            &style,
+            self.reactive_context.as_ref(),
+            rake,
+            next,
+        )?;
 
         let heading_text = format_ident!("__rake_heading_text_{index}", span = Span::mixed_site());
 
@@ -45,7 +52,12 @@ impl Element {
 
         let label =
             if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
-                quote!(#node = #node.aria_label(#heading_text.full_text());)
+                let fallback = quote!(#node = #node.aria_label(#heading_text.full_text()););
+
+                self.rest.as_ref().map_or_else(
+                    || fallback.clone(),
+                    |rest| quote!(if #rest.aria_label.is_none() { #fallback }),
+                )
             } else {
                 TokenStream::new()
             };
@@ -71,6 +83,7 @@ fn inline_children(
     nodes: &[Node],
     content: &Ident,
     inherited: &Ident,
+    context: Option<&Ident>,
     rake: &TokenStream,
     next: &mut usize,
 ) -> syn::Result<TokenStream> {
@@ -80,15 +93,20 @@ fn inline_children(
         output.extend(match node {
             Node::Text(text) => quote_spanned!(text.span()=> #content.push(#text, &#inherited);),
             Node::Expression(value) => {
-                quote_spanned!(value.span()=> #content.push(#value, &#inherited);)
+                if let Some(context) = context {
+                    quote_spanned!(value.span()=> #content.push(
+                        #rake::__private::ParagraphTextValue::resolve_text(#value, &*#context), &#inherited);)
+                } else {
+                    quote_spanned!(value.span()=> #content.push(#value, &#inherited);)
+                }
             }
             Node::If {
                 condition,
                 then_nodes,
                 else_nodes,
             } => {
-                let then_nodes = inline_children(then_nodes, content, inherited, rake, next)?;
-                let else_nodes = inline_children(else_nodes, content, inherited, rake, next)?;
+                let then_nodes = inline_children(then_nodes, content, inherited, context, rake, next)?;
+                let else_nodes = inline_children(else_nodes, content, inherited, context, rake, next)?;
 
                 quote!(if #condition { #then_nodes } else { #else_nodes })
             }
@@ -98,7 +116,7 @@ fn inline_children(
                     .map(|arm| {
                         let pattern = &arm.pattern;
                         let guard = arm.guard.as_ref().map(|guard| quote!(if #guard));
-                        let body = inline_children(&arm.children, content, inherited, rake, next)?;
+                        let body = inline_children(&arm.children, content, inherited, context, rake, next)?;
 
                         Ok(quote!(#pattern #guard => { #body },))
                     })
@@ -111,7 +129,7 @@ fn inline_children(
                 iterator,
                 children,
             } => {
-                let children = inline_children(children, content, inherited, rake, next)?;
+                let children = inline_children(children, content, inherited, context, rake, next)?;
 
                 quote!(for #pattern in #iterator { #children })
             }
@@ -216,7 +234,15 @@ pub(super) fn inline_element(
 
     *next += 1;
     let local = format_ident!("__rake_inline_style_{index}", span = Span::mixed_site());
-    let children = inline_children(&element.children, content, &local, rake, next)?;
+
+    let children = inline_children(
+        &element.children,
+        content,
+        &local,
+        element.reactive_context.as_ref(),
+        rake,
+        next,
+    )?;
 
     Ok(quote!({
         let #local = #style;
