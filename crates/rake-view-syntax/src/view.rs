@@ -20,6 +20,208 @@ pub struct View(Element);
 pub use layout::{Layout, LayoutKind};
 
 impl View {
+    /// Resolves reactive markup values using the named application context.
+    pub fn use_reactive_context(&mut self, context: &Ident) {
+        if self.0.reactive_context.is_none() {
+            self.0.use_reactive_context(context);
+        }
+    }
+
+    /// Rejects known root classes that an explicit cache box cannot preserve.
+    ///
+    /// # Errors
+    /// Returns an error for positioning, visibility, or variant utilities on a literal root class.
+    pub fn validate_cache_root(&self) -> syn::Result<()> {
+        if let Some(attribute) = self
+            .0
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "class")
+            && let AttributeValue::Expression(expression) = &attribute.value
+            && let Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(classes),
+                ..
+            }) = &**expression
+            && classes
+                .value()
+                .split_whitespace()
+                .any(unsupported_cache_class)
+        {
+            return Err(syn::Error::new_spanned(
+                classes,
+                "explicit caching cannot preserve positioning, hidden, or variants on the root; use cached = false",
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[doc = "Extracts explicit root dimensions for the experimental component cache."]
+    pub fn cache_style(&self, rake: &TokenStream) -> syn::Result<Option<TokenStream>> {
+        if self.0.is_component()
+            || self
+                .0
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name == "style" || attribute.name.starts_with("class:"))
+        {
+            return Ok(None);
+        }
+
+        let Some(attribute) = self
+            .0
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "class")
+        else {
+            return Ok(None);
+        };
+
+        let AttributeValue::Expression(expression) = &attribute.value else {
+            return Ok(None);
+        };
+
+        let Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(value),
+            ..
+        }) = &**expression
+        else {
+            return Ok(None);
+        };
+
+        let classes: Vec<_> = value
+            .value()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+
+        if classes.iter().any(|class| unsupported_cache_class(class)) {
+            return Ok(None);
+        }
+
+        let definite =
+            |value: &str| value != "auto" && value != "min" && value != "max" && value != "fit";
+
+        let mut width = false;
+        let mut height = false;
+
+        for class in &classes {
+            if let Some(value) = class.strip_prefix("size-") {
+                width = definite(value);
+                height = width;
+            }
+
+            if let Some(value) = class.strip_prefix("w-") {
+                width = definite(value);
+            }
+
+            if let Some(value) = class.strip_prefix("h-") {
+                height = definite(value);
+            }
+        }
+
+        if !width || !height {
+            return Ok(None);
+        }
+
+        let layout = classes
+            .iter()
+            .filter(|class| {
+                [
+                    "w-", "h-", "size-", "min-w-", "min-h-", "max-w-", "max-h-", "grow", "shrink",
+                    "basis-", "flex-", "self-", "m-", "mx-", "my-", "mt-", "mb-", "ml-", "mr-",
+                ]
+                .iter()
+                .any(|prefix| class.starts_with(prefix))
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let literal = LitStr::new(&layout, value.span());
+        let expression = syn::parse_quote!(#literal);
+        let plan = class_methods(&expression, rake, None)?;
+        let methods = plan.emit_base(&format_ident!("__style"));
+
+        Ok(Some(quote!({
+            use #rake::gpui::Styled as _;
+            #rake::gpui::StyleRefinement::default() #methods
+        })))
+    }
+
+    /// Marks a flex root whose minimums permit its parent to size it without content.
+    pub fn stretch_root(&mut self, stretched: &Ident) -> bool {
+        if !matches!(self.0.resolved, Tag::Container(_))
+            || self
+                .0
+                .attributes
+                .iter()
+                .any(|a| a.name == "style" || a.name.starts_with("class:"))
+        {
+            return false;
+        }
+
+        let Some(classes) = self.0.literal_classes() else {
+            return false;
+        };
+
+        let classes: BTreeSet<_> = classes.split_whitespace().collect();
+
+        if !["flex-1", "min-w-0", "min-h-0"]
+            .iter()
+            .all(|class| classes.contains(class))
+            || classes.iter().any(|class| {
+                !matches!(
+                    *class,
+                    "flex-1" | "min-w-0" | "min-h-0" | "flex" | "flex-row" | "flex-col"
+                )
+            })
+        {
+            return false;
+        }
+
+        self.0.stretch = Some(stretched.clone());
+
+        true
+    }
+
+    #[doc = "Forwards declared rest attributes to an interactive root."]
+    pub fn forward_rest(&mut self, rest: &Ident) -> syn::Result<()> {
+        if matches!(self.0.resolved, Tag::Component | Tag::Svg | Tag::Image) {
+            return Err(syn::Error::new_spanned(
+                &self.0.tag,
+                "rest attributes require an interactive built-in root",
+            ));
+        }
+
+        self.0.rest = Some(rest.clone());
+
+        Ok(())
+    }
+
+    #[doc = "Lowers a utility literal to a style refinement for forwarded component classes."]
+    pub fn attribute_style(classes: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
+        let plan = class_methods(classes, rake, None)?;
+
+        if plan.interactive {
+            return Err(syn::Error::new_spanned(
+                classes,
+                "forwarded class utilities must be non-interactive; put interaction styles on the component root",
+            ));
+        }
+
+        let methods = plan.emit_base(&format_ident!("__style"));
+
+        Ok(
+            quote!({ use #rake::gpui::Styled as _; #rake::gpui::StyleRefinement::default() #methods }),
+        )
+    }
+
+    /// Whether the invocation starts with a reactive context before the root.
+    pub fn has_context_prefix(&self) -> bool {
+        self.0.reactive_context.is_some()
+    }
+
     /// Borrows the parsed root without applying compiler recovery or lowering.
     pub fn root(&self) -> &Element {
         &self.0
@@ -36,12 +238,25 @@ impl View {
     }
 }
 
+fn unsupported_cache_class(class: &str) -> bool {
+    let class = class.trim_start_matches('-');
+
+    matches!(class, "absolute" | "relative" | "hidden")
+        || class.contains(':')
+        || ["inset-", "top-", "right-", "bottom-", "left-"]
+            .iter()
+            .any(|prefix| class.starts_with(prefix))
+}
+
 #[derive(Clone)]
 /// A parsed element, including component properties and control-flow children.
 pub struct Element {
     /// Original Rust path spelling of the tag.
     pub tag: syn::Path,
     resolved: Tag,
+    reactive_context: Option<Ident>,
+    rest: Option<Ident>,
+    stretch: Option<Ident>,
     display_name: String,
     self_closing: bool,
     /// Named attributes in source order.
@@ -167,7 +382,21 @@ impl Diagnostics {
 
 impl Parse for View {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let root = Element::parse(input)?;
+        let context = if input.peek(Ident) && input.peek2(Token![=>]) {
+            let context = input.parse::<Ident>()?;
+
+            input.parse::<Token![=>]>()?;
+
+            Some(context)
+        } else {
+            None
+        };
+
+        let mut root = Element::parse(input)?;
+
+        if let Some(context) = context {
+            root.use_reactive_context(&context);
+        }
 
         if !input.is_empty() {
             return Err(input.error("view! requires exactly one root element"));
@@ -352,6 +581,9 @@ impl Parse for Element {
         Ok(Self {
             tag,
             resolved,
+            reactive_context: None,
+            rest: None,
+            stretch: None,
             display_name: tag_name,
             self_closing,
             attributes,
@@ -522,7 +754,7 @@ fn boolean_attribute(tag: Tag, name: &str) -> bool {
     tag == Tag::Component
         || matches!(
             name,
-            "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
+            "select-text" | "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
         )
 }
 
@@ -836,8 +1068,117 @@ impl View {
 }
 
 impl Element {
+    /// Whether this element starts an inline text flow.
+    pub fn composes_text(&self) -> bool {
+        self.resolved.composes_text()
+    }
+
     fn is_component(&self) -> bool {
         self.resolved == Tag::Component
+    }
+
+    fn use_reactive_context(&mut self, context: &Ident) {
+        fn visit(nodes: &mut [Node], context: &Ident) {
+            for node in nodes {
+                match node {
+                    Node::Element(element) => element.use_reactive_context(context),
+                    Node::If {
+                        then_nodes,
+                        else_nodes,
+                        ..
+                    } => {
+                        visit(then_nodes, context);
+                        visit(else_nodes, context);
+                    }
+                    Node::Match { arms, .. } => {
+                        for arm in arms {
+                            visit(&mut arm.children, context);
+                        }
+                    }
+                    Node::For { children, .. } => visit(children, context),
+                    Node::Text(_) | Node::Expression(_) => {}
+                }
+            }
+        }
+
+        self.reactive_context = Some(context.clone());
+
+        for attribute in &mut self.attributes {
+            if let AttributeValue::Markup(element) = &mut attribute.value {
+                element.use_reactive_context(context);
+            }
+        }
+
+        visit(&mut self.children, context);
+    }
+
+    fn resolve_value(&self, ty: TokenStream, value: &Expr, rake: &TokenStream) -> TokenStream {
+        self.reactive_context.as_ref().map_or_else(
+            || quote!(#value),
+            |cx| quote!(#rake::__private::Value::<#ty>::resolve(#value, &*#cx)),
+        )
+    }
+
+    fn resolve_into(&self, ty: TokenStream, value: &Expr, rake: &TokenStream) -> TokenStream {
+        self.reactive_context.as_ref().map_or_else(
+            || quote!(#value),
+            |cx| quote!(#rake::__private::IntoAttribute::<#ty>::resolve_into(#value, &*#cx)),
+        )
+    }
+
+    fn literal_classes(&self) -> Option<String> {
+        let Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(classes),
+            ..
+        }) = self.attribute("class")?.expression().ok()?
+        else {
+            return None;
+        };
+
+        Some(classes.value())
+    }
+
+    fn has_stretch_box(&self) -> bool {
+        if !cfg!(feature = "reactive")
+            || !matches!(self.resolved, Tag::Container(_))
+            || self.rest.is_some()
+            || self
+                .attributes
+                .iter()
+                .any(|a| a.name == "style" || a.name.starts_with("class:"))
+        {
+            return false;
+        }
+
+        let Some(classes) = self.literal_classes() else {
+            return false;
+        };
+
+        let mut width = false;
+        let mut height = false;
+
+        for class in classes.split_whitespace() {
+            let length = |prefix: &str| {
+                class.strip_prefix(prefix).is_some_and(|value| {
+                    value
+                        .parse::<f32>()
+                        .is_ok_and(|value| value.is_finite() && value > 0.)
+                })
+            };
+
+            match class {
+                "flex" | "flex-col" | "flex-row" | "items-stretch" => (),
+                _ if length("size-") => {
+                    width = true;
+                    height = true;
+                }
+                _ if length("w-") => width = true,
+                _ if length("h-") => height = true,
+                _ => return false,
+            }
+        }
+
+        width && height
     }
 
     fn attribute(&self, name: &str) -> Option<&Attribute> {
@@ -913,9 +1254,22 @@ impl Element {
                 .map(Attribute::expression)
                 .transpose()?;
 
-            let value = value.map_or_else(|| quote!(false), |value| quote!(#value));
+            let value = value.map_or_else(
+                || quote!(false),
+                |value| {
+                    if self.reactive_context.is_some() {
+                        self.resolve_value(quote!(bool), value, rake)
+                    } else if cfg!(feature = "reactive") {
+                        quote!(#rake::__private::Value::<bool>::resolve(#value, cx))
+                    } else {
+                        quote!(#value)
+                    }
+                },
+            );
 
-            setup.extend(quote!(let #disabled: bool = #value;));
+            let forwarded = self.rest.as_ref().map(|rest| quote!(|| #rest.disabled));
+
+            setup.extend(quote!(let #disabled: bool = #value #forwarded;));
         }
 
         let id = self
@@ -956,6 +1310,23 @@ impl Element {
 
         builder = self.apply_attributes(builder, rake, index, &disabled, &mapped, &mut setup)?;
 
+        if let Some(rest) = &self.rest {
+            let disabled = if is_button {
+                quote!(#disabled)
+            } else {
+                quote!(false)
+            };
+
+            let hover = self.attribute("on:hover").is_none();
+            let drag = self.attribute("on:drag").is_none();
+
+            builder.extend(quote!(.map(|root| #rest.apply(root, #disabled, #hover, #drag))));
+        }
+
+        if let Some(stretched) = &self.stretch {
+            builder.extend(quote!(.when(#stretched, |root| root.size_full())));
+        }
+
         builder = self.apply_focus(builder, rake, &disabled, &mapped)?;
 
         if self.resolved.composes_text() {
@@ -965,7 +1336,20 @@ impl Element {
             return Ok(quote!({ #setup #output }));
         }
 
-        let children = expand_children_into(&self.children, &node, &siblings, rake, next)?;
+        let children = if let [Node::Element(child)] = self.children.as_slice()
+            && child.is_component()
+            && self.has_stretch_box()
+        {
+            let component = child.expand_component(rake, next)?;
+
+            quote!({
+                use #rake::reactive::ConstrainComponent as _;
+                let mut component = #rake::reactive::ComponentChild(Some(#component));
+                #siblings.push(&mut #node, (&mut component).constrain());
+            })
+        } else {
+            expand_children_into(&self.children, &node, &siblings, rake, next)?
+        };
 
         let output = if self.children.is_empty() {
             builder
@@ -996,8 +1380,10 @@ impl Element {
 
                 builder
             }
-            Tag::Paragraph => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
-                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
+            Tag::Paragraph | Tag::Link => {
+                quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
+                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph))
+            }
             Tag::Heading(level) => {
                 let level = level as usize;
 
@@ -1026,7 +1412,8 @@ impl Element {
 
                 self.reject_leaf_children()?;
 
-                let path = path.expression()?;
+                let path =
+                    self.resolve_into(quote!(#rake::gpui::SharedString), path.expression()?, rake);
 
                 quote!(#rake::__private::view_svg(#path))
             }
@@ -1042,7 +1429,8 @@ impl Element {
 
                 self.reject_leaf_children()?;
 
-                let source = source.expression()?;
+                let source =
+                    self.resolve_into(quote!(#rake::gpui::ImageSource), source.expression()?, rake);
 
                 quote!(#rake::__private::view_image(#source, #id))
             }
@@ -1149,6 +1537,23 @@ impl Element {
                 continue;
             }
 
+            if attribute.name == "class"
+                && !matches!(self.resolved, Tag::Paragraph | Tag::Heading(_))
+                && matches!(value, Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(text), .. }) if text.value().split_whitespace().any(|class| class == "select-text"))
+            {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "select-text belongs on paragraphs and headings",
+                ));
+            }
+
+            if attribute.name == "class:select-text" {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "use select-text={condition} on paragraphs and headings",
+                ));
+            }
+
             if attribute.name == "class" || attribute.name.starts_with("class:") {
                 let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
                     utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?
@@ -1186,6 +1591,8 @@ impl Element {
                     );
 
                     // Evaluate preceding attributes before binding this condition.
+                    let value = self.resolve_value(quote!(bool), value, rake);
+
                     setup.extend(quote!(let #mapped = #builder; let #condition: bool = #value;));
                     builder = quote!(#mapped);
                     plan.gate(&condition, setup);
@@ -1202,26 +1609,56 @@ impl Element {
                 "disabled" | "focus" | "tabindex" | "tab-navigation" => continue,
                 "src" if self.resolved == Tag::Image => continue,
                 "path" if self.resolved == Tag::Svg => continue,
-                "alt" if self.resolved == Tag::Image => quote!(.aria_label(#value)),
-                "aria-label" => quote!(.aria_label(#value)),
-                "aria-description" => quote!(.aria_description(#value)),
-                "aria-keyshortcuts" => quote!(.aria_keyshortcuts(#value)),
-                "aria-expanded" => quote!(.aria_expanded(#value)),
-                "role" => quote!(.role(#value)),
+                "alt" if self.resolved == Tag::Image => {
+                    let value = self.resolve_into(quote!(#rake::gpui::SharedString), value, rake);
+
+                    quote!(.aria_label(#value))
+                }
+                "aria-label" if self.resolved == Tag::Link => TokenStream::new(),
+                "aria-label" | "aria-description" | "aria-keyshortcuts" => {
+                    let method = format_ident!("{}", attribute.name.replace('-', "_"));
+                    let value = self.resolve_into(quote!(#rake::gpui::SharedString), value, rake);
+
+                    quote!(.#method(#value))
+                }
+                "aria-expanded" => {
+                    let value = self.resolve_value(quote!(bool), value, rake);
+
+                    quote!(.aria_expanded(#value))
+                }
+                "role" => {
+                    let value =
+                        self.resolve_value(quote!(#rake::gpui::accesskit::Role), value, rake);
+
+                    quote!(.role(#value))
+                }
                 "key-context" => quote!(.key_context(#value)),
                 "scroll" => {
                     require_borrowed_place(value, "scroll")?;
 
                     quote!(.track_scroll(#value))
                 }
-                "wrap" if self.resolved.composes_text() => quote!(.when_else(#value,
-                    |#mapped| #mapped.whitespace_normal(),
-                    |#mapped| #mapped.whitespace_nowrap())),
-                "ellipsis" if self.resolved.composes_text() => quote!(.when(#value,
-                    |#mapped| #mapped.overflow_hidden().text_ellipsis())),
+                "select-text" if matches!(self.resolved, Tag::Paragraph | Tag::Heading(_)) => {
+                    TokenStream::new()
+                }
+                "href" if self.resolved == Tag::Link => TokenStream::new(),
+                "wrap" if self.resolved.composes_text() => {
+                    let value = self.resolve_value(quote!(bool), value, rake);
+
+                    quote!(.when_else(#value,
+                        |#mapped| #mapped.whitespace_normal(),
+                        |#mapped| #mapped.whitespace_nowrap()))
+                }
+                "ellipsis" if self.resolved.composes_text() => {
+                    let value = self.resolve_value(quote!(bool), value, rake);
+
+                    quote!(.when(#value, |#mapped| #mapped.overflow_hidden().text_ellipsis()))
+                }
                 "max-lines" if self.resolved.composes_text() => {
                     let limit =
                         format_ident!("__rake_paragraph_limit_{index}", span = Span::mixed_site());
+
+                    let value = self.resolve_value(quote!(usize), value, rake);
 
                     quote!(.line_clamp({ let #limit: usize = #value; #limit.max(1) }))
                 }
@@ -1292,23 +1729,22 @@ impl Element {
             .map(Attribute::expression)
             .transpose()?;
 
-        let tabindex = tabindex.map_or_else(|| quote!(None), |value| quote!(Some(#value)));
+        let tabindex = tabindex.map(|value| self.resolve_value(quote!(isize), value, rake));
+
+        let optional_index = tabindex
+            .as_ref()
+            .map_or_else(|| quote!(None), |value| quote!(Some(#value)));
 
         if !is_button {
             if let Some(focus) = focus {
-                builder = quote!(#rake::__private::view_focus(#builder, #focus, #tabindex));
-            } else if self.attribute("tabindex").is_some() {
-                let value = self
-                    .attribute("tabindex")
-                    .expect("checked tabindex")
-                    .expression()?;
-
+                builder = quote!(#rake::__private::view_focus(#builder, #focus, #optional_index));
+            } else if let Some(value) = tabindex {
                 builder = quote!(#rake::__private::view_tab_index(#builder, #value));
             }
         }
 
         if let Some(navigation) = self.attribute("tab-navigation") {
-            let value = navigation.expression()?;
+            let value = self.resolve_value(quote!(bool), navigation.expression()?, rake);
 
             builder.extend(quote!(.when(#value, |#mapped| #mapped.on_key_down(#rake::__private::view_tab_navigation))));
         }
@@ -1316,7 +1752,8 @@ impl Element {
         if is_button {
             let focus = focus.map_or_else(|| quote!(None), |value| quote!(Some((#value).clone())));
 
-            builder = quote!(#rake::__private::view_button(#builder, #disabled, #focus, #tabindex));
+            builder =
+                quote!(#rake::__private::view_button(#builder, #disabled, #focus, #optional_index));
         }
 
         Ok(builder)

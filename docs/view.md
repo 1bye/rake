@@ -336,13 +336,13 @@ let _paragraph = rake::view! {
 
 Paragraph and heading expressions must implement `AsRef<str>`, including `String`, `&str`, `SharedString` and borrowed strings. Use `format!` for numbers and other `Display` values. Arbitrary `IntoElement` values, components, widgets, images and block tags aren't paragraph content.
 
-`if`, `if let`, `for` and `match` work inside paragraphs, evaluating only selected text once in written order. Inline loops need no IDs, because their output is text rather than retained elements. An empty `<p/>` is supported.
+`if`, `if let`, `for` and `match` work inside paragraphs, evaluating only selected text once in written order. Text and styling tags in inline loops need no IDs. Every inline link repeated by a loop needs an explicit, stable `id`, even inside nested styling tags or control flow. An empty `<p/>` is supported.
 
 Inline `class` accepts `text-[#rrggbb]`, `font-[Family_Name]`, `font-normal`, `font-medium`, `font-semibold`, `font-bold`, `italic`, `not-italic` and `underline`.
 
 Inline `style` takes a typed `gpui::HighlightStyle` value, **not** the builder closure used on layout tags. It supports run properties such as color, weight, italics, underline, strikethrough and background. `font-family` accepts a GPUI font-family string. Attributes apply after the tag's default style, in written order.
 
-Font size, line height, alignment, dimensions, padding and other layout belong on `p`. Inline IDs, events and accessibility overrides are rejected, and `br` accepts no attributes or children.
+Font size, line height, alignment, dimensions, padding and other layout belong on `p`. Inline styling tags reject IDs, events and accessibility overrides, and `br` accepts no attributes or children.
 
 | Paragraph attribute | Behavior |
 | --- | --- |
@@ -377,7 +377,7 @@ Wrapping and truncation need a constrained width.
 | `max-lines` only | Clips without an ellipsis |
 | `ellipsis={false}` | No truncation styling |
 
-These controls use the normal attribute order, so later raw GPUI styling can override them. Only end truncation is supported, and text transforms through raw style builders aren't implemented. Selection and interactive links aren't implemented either.
+These controls use the normal attribute order, so later raw GPUI styling can override them. Only end truncation is supported, and text transforms through raw style builders aren't implemented.
 
 The paragraph keeps one accessible text node with the full text, even when the visual preview is truncated.
 
@@ -494,7 +494,7 @@ For large lists, embed a GPUI virtual list instead of eagerly generating every i
 
 Each built-in layout tag and image gets a GPUI ID (SVGs are exempt), either explicit or derived from its source site and position. GPUI scopes IDs under their nearest identified ancestor.
 
-**Elements emitted directly by a loop must have explicit IDs**, outside composed paragraph and heading text. This includes elements in conditional branches and match arms immediately inside that loop.
+**Elements emitted directly by a loop must have explicit IDs**, including in its conditional branches and match arms. In composed paragraph and heading text, this requirement applies to every link repeated by a loop, including links nested in styling tags.
 
 - Prefer stable data keys, such as `id={("row", row.id)}`, over positions when rows can reorder.
 - Nested children under an identified row can use generated IDs.
@@ -637,21 +637,59 @@ Independent local errors are reported together, including invalid attributes, ut
 
 On failure, valid parts keep their GPUI builder context in unreachable generated code, so editor tooling still type-checks expressions and listeners. Invalid component properties and loop roots are omitted to avoid unrelated errors. This code never runs, and erroneous markup never builds.
 
+## Links and selectable text
+
+Paragraphs and headings accept `select-text` (or `class="select-text"`) to opt into
+Base’s window selection and copy. Selection spans styled inline runs and copies
+the visible text, including truncation affixes.
+
+```rust,ignore
+rake::view! {
+    <p select-text>"Read "<a href="https://example.org/">"the guide"</a>" or copy this paragraph."</p>
+}
+```
+
+`<a href>` also works outside paragraphs. Links expose their visible name (or
+`aria-label`), take Tab focus and activate with Enter. A pointer drag selects text;
+a plain click follows the link. Link text uses the semantic `primary` color;
+selection and focused-link backgrounds use `selection`, in light and dark themes.
+
+A single leading slash identifies an app route, dispatched through the current
+window’s first rendered router, typically the workspace or a standalone route
+outlet. External links allow `http`, `https`, `mailto` and `tel` only.
+Protocol-relative URLs, relative paths, whitespace, control characters, backslashes
+and other schemes (including `javascript`, `data` and `file`) are rejected on both
+targets. Route links require a routed application. Inline links accept `href`,
+`id` and `aria-label`. Use a stable data key for every link inside an inline
+loop. A generated ID is available for inline links outside loops.
+
+```rust,ignore
+rake::view! {
+    <p>
+        for item in &items {
+            <a id={item.id} href={item.href.clone()} aria-label={item.title.clone()}>
+                {item.title.clone()}
+            </a>" "
+        }
+    </p>
+}
+```
+
 ## Current limits
 
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed markup are compile errors.
 
 Not implemented in this version:
 
-- Input controls, links and forms.
-- Automatic shortcut labels, selectable text and interactive inline links.
+- Input controls and forms.
+- Automatic shortcut labels.
 - `aria-labelledby` and the complete ARIA vocabulary.
 - General focus traps outside the overlay controls.
 - CSS selectors or cascade, and HTML entity decoding.
 - Fragments, explicit generic arguments in component tags and dedicated slot syntax.
 - Automatic signal tracking and markup hot reload.
 
-Inline text accepts checked text-run styles and theme colors and fonts, and rejects conditional class attributes, events and IDs. Literal class branches are supported. SVG leaves use their restricted attribute set, so wrap them for interaction and identity. Existing GPUI components remain available through `{expression}`. Raster images follow your asset and HTTP configuration, and SVG paths use the GPUI asset source.
+Inline spans accept checked text-run styles and theme colors and fonts, and reject conditional class attributes, events and IDs. Inline links accept their own stable IDs and accessible labels. Literal class branches are supported. SVG leaves use their restricted attribute set, so wrap them for interaction and identity. Existing GPUI components remain available through `{expression}`. Raster images follow your asset and HTTP configuration, and SVG paths use the GPUI asset source.
 
 Every rendered macro-authored element, component or entity mount, and ordinary text or expression child automatically creates a development inspection boundary, so no `.inspect(...)` calls are needed. An existing `.inspect("name")` on a built-in root renames that boundary without adding another.
 

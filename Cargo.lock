@@ -7362,8 +7362,10 @@ dependencies = [
  "foreign-types",
  "futures",
  "gpui-fast",
+ "gpui-fast-apple",
  "gpui-fast-platform",
  "gpui-pre",
+ "gpui-pre-apple",
  "gpui-pre-platform",
  "icu_calendar",
  "icu_datetime",
@@ -7381,6 +7383,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
  "objc2-user-notifications",
+ "oo7",
  "pathfinder_simd",
  "rake-autostart",
  "rake-blaze-live",
@@ -7399,6 +7402,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "slotmap",
  "sys-locale",
  "tempfile",
  "thiserror 2.0.21",
@@ -7414,6 +7418,8 @@ dependencies = [
  "windows 0.62.2",
  "windows-sys 0.61.2",
  "writeable",
+ "zbus",
+ "zeroize",
 ]
 
 [[package]]
@@ -7713,6 +7719,8 @@ version = "0.1.0-alpha.4"
 dependencies = [
  "futures",
  "gpui-base",
+ "gpui-fast",
+ "gpui-fast-platform",
  "gpui-pre",
  "gpui-pre-platform",
  "objc2 0.6.5",
@@ -7829,6 +7837,7 @@ dependencies = [
  "gpui-fast",
  "gpui-kit",
  "gpui-pre",
+ "rake-macros",
  "tracing",
  "unicode-segmentation",
 ]

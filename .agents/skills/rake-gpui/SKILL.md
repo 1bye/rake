@@ -36,8 +36,9 @@ Deep GPUI rules require `rake lint --deep` and the pinned nightly plus cargo-dyl
 | `view-theme-literal` | warn | literal color or design size bypasses the installed theme |
 | `release-debug-assertions` | warn | debug assertions are explicitly enabled in a release profile |
 | `view-button-label` | warn | button content has no automatic accessible label |
+| `view-link-label` | warn | link has no accessible name |
 | `view-image-alt` | deny | image is missing alt text |
-| `view-loop-index-id` | warn | loop item ID is derived from an enumerate index |
+| `view-loop-index-id` | warn | loop item needs a stable data ID |
 | `gpui-dropped-task` | warn | GPUI task is immediately dropped (deep) |
 | `gpui-render-new` | warn | entity allocated during render (deep) |
 | `gpui-reentrant-update` | warn | entity updated inside its own update (deep) |
@@ -130,6 +131,26 @@ After:
 <button aria-label="Search">{icon}</button>
 ```
 
+## view-link-label (warn)
+
+link has no accessible name
+
+Links need nonempty literal text or an explicit aria-label. Inline text styling preserves a literal name; opaque dynamic content needs an explicit label.
+
+What to write instead: add visible text or aria-label describing the destination
+
+Before:
+
+```text
+<a href="/"/>
+```
+
+After:
+
+```text
+<a href="/">Home</a>
+```
+
 ## view-image-alt (deny)
 
 image is missing alt text
@@ -152,11 +173,11 @@ After:
 
 ## view-loop-index-id (warn)
 
-loop item ID is derived from an enumerate index
+loop item needs a stable data ID
 
-Position changes when items are reordered or inserted, moving retained focus and state to another item. This syntax rule recognizes index bindings from enumerate(), including rev/skip/take/step_by/by_ref adapters. It checks direct IDs, tuples, casts, arithmetic, index methods and format! arguments/captures. Arbitrary calls and data lookups are opaque; identifier spelling alone never makes a value an index.
+Position changes when items are reordered or inserted, moving retained focus and state to another item. Inline links inside a paragraph or heading loop must supply an explicit id because the generated ID would be shared by every iteration. This syntax rule recognizes index bindings from enumerate(), including rev/skip/take/step_by/by_ref adapters. It checks direct IDs, tuples, casts, arithmetic, index methods and format! arguments/captures. Arbitrary calls and data lookups are opaque; identifier spelling alone never makes a value an index.
 
-What to write instead: replace the index in id with a stable data key, such as row.id
+What to write instead: set id to a stable data key, such as row.id
 
 Before:
 

@@ -21,8 +21,11 @@ use snapshot::Captured;
 mod text_editing;
 #[cfg(feature = "gpui")]
 mod view;
+
 #[cfg(feature = "gpui")]
 pub(crate) use view::authored;
+#[cfg(all(feature = "gpui", feature = "experimental-reactive"))]
+pub(crate) use view::component_signals;
 
 #[cfg(feature = "gpui")]
 pub use view::{InspectElement, Inspected, inspect};
@@ -783,6 +786,7 @@ fn tree_entry(element: &Element) -> Element {
         view: element.view.as_ref().map(|view| ViewMetadata {
             tag: view.tag.clone(),
             style_sources: Vec::new(),
+            signals: view.signals.clone(),
         }),
         paint_order: element.paint_order,
         style_editable: element.style_editable,

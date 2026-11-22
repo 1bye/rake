@@ -3,6 +3,11 @@
 //! Doubles: none.
 //! Requires: macOS graphical session and a working GPU; `native-tests` feature.
 
+#[cfg(all(target_os = "macos", feature = "gpui-fast"))]
+extern crate gpui_fast as gpui;
+#[cfg(all(target_os = "macos", feature = "gpui-fast"))]
+extern crate gpui_fast_platform as gpui_platform;
+
 #[cfg(target_os = "macos")]
 mod suite {
     use std::{cell::Cell, mem, rc::Rc, time::Duration};

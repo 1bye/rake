@@ -31,7 +31,43 @@ impl Element {
             span = Span::mixed_site()
         );
 
-        let children = inline_children(&self.children, &content, &style, rake, next)?;
+        let mut children = inline_children(
+            &self.children,
+            &content,
+            &style,
+            self.reactive_context.as_ref(),
+            rake,
+            next,
+        )?;
+
+        if self.resolved == Tag::Link {
+            let href = self.required_attribute("href")?.expression()?;
+
+            let label = self
+                .attribute("aria-label")
+                .map(|a| a.expression())
+                .transpose()?
+                .map_or_else(
+                    || quote!(None),
+                    |label| {
+                        let label =
+                            self.resolve_into(quote!(#rake::gpui::SharedString), label, rake);
+
+                        quote!(Some((#label).into()))
+                    },
+                );
+
+            let id = quote!(#rake::gpui::Element::id(&#node).expect("link has an identity"));
+            let inspect = link_inspector(self, rake, index);
+
+            children.extend(quote!(#content.link(0, #href, #id, #label, #inspect);));
+        }
+
+        let selectable = self.attribute("select-text").map(|a| a.expression()).transpose()?.map_or_else(|| {
+            let enabled = self.attribute("class").and_then(|a| a.expression().ok()).is_some_and(|value| matches!(value, Expr::Lit(syn::ExprLit {lit: Lit::Str(text), ..}) if text.value().split_whitespace().any(|class| class == "select-text")));
+
+            quote!(#enabled)
+        }, |value| quote!(#value));
 
         let heading_text = format_ident!("__rake_heading_text_{index}", span = Span::mixed_site());
 
@@ -45,17 +81,28 @@ impl Element {
 
         let label =
             if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
-                quote!(#node = #node.aria_label(#heading_text.full_text());)
+                let fallback = quote!(#node = #node.aria_label(#heading_text.full_text()););
+
+                self.rest.as_ref().map_or_else(
+                    || fallback.clone(),
+                    |rest| quote!(if #rest.aria_label.is_none() { #fallback }),
+                )
             } else {
                 TokenStream::new()
             };
+
+        let selection = if selectable.to_string() == "false" {
+            TokenStream::new()
+        } else {
+            quote!(.select_text(#selectable))
+        };
 
         Ok(quote!({
             let mut #node = #builder;
             let mut #content = #rake::__private::ViewParagraphContent::default();
             let #style = #rake::__private::ViewRunStyle::default();
             #children
-            let #heading_text = #content.finish();
+            let #heading_text = #content.finish() #selection;
             #label
             let mut #siblings = #rake::__private::ViewChildren::default();
             #rake::__private::inspection!(#heading_text, |__rake_text| #rake::__private::view_inspect_child(
@@ -71,6 +118,7 @@ fn inline_children(
     nodes: &[Node],
     content: &Ident,
     inherited: &Ident,
+    context: Option<&Ident>,
     rake: &TokenStream,
     next: &mut usize,
 ) -> syn::Result<TokenStream> {
@@ -80,15 +128,20 @@ fn inline_children(
         output.extend(match node {
             Node::Text(text) => quote_spanned!(text.span()=> #content.push(#text, &#inherited);),
             Node::Expression(value) => {
-                quote_spanned!(value.span()=> #content.push(#value, &#inherited);)
+                if let Some(context) = context {
+                    quote_spanned!(value.span()=> #content.push(
+                        #rake::__private::ParagraphTextValue::resolve_text(#value, &*#context), &#inherited);)
+                } else {
+                    quote_spanned!(value.span()=> #content.push(#value, &#inherited);)
+                }
             }
             Node::If {
                 condition,
                 then_nodes,
                 else_nodes,
             } => {
-                let then_nodes = inline_children(then_nodes, content, inherited, rake, next)?;
-                let else_nodes = inline_children(else_nodes, content, inherited, rake, next)?;
+                let then_nodes = inline_children(then_nodes, content, inherited, context, rake, next)?;
+                let else_nodes = inline_children(else_nodes, content, inherited, context, rake, next)?;
 
                 quote!(if #condition { #then_nodes } else { #else_nodes })
             }
@@ -98,7 +151,7 @@ fn inline_children(
                     .map(|arm| {
                         let pattern = &arm.pattern;
                         let guard = arm.guard.as_ref().map(|guard| quote!(if #guard));
-                        let body = inline_children(&arm.children, content, inherited, rake, next)?;
+                        let body = inline_children(&arm.children, content, inherited, context, rake, next)?;
 
                         Ok(quote!(#pattern #guard => { #body },))
                     })
@@ -111,7 +164,7 @@ fn inline_children(
                 iterator,
                 children,
             } => {
-                let children = inline_children(children, content, inherited, rake, next)?;
+                let children = inline_children(children, content, inherited, context, rake, next)?;
 
                 quote!(for #pattern in #iterator { #children })
             }
@@ -131,6 +184,60 @@ pub(super) fn inline_element(
 ) -> syn::Result<TokenStream> {
     if !Tag::is_inline_name(&element.tag) {
         return Err(syn::Error::new(element.tag.span(), PARAGRAPH_CONTENT));
+    }
+
+    if element.tag.is_ident("a") {
+        let link_index = *next;
+
+        *next += 1;
+        let href = element.required_attribute("href")?.expression()?;
+
+        for attribute in &element.attributes {
+            if !matches!(attribute.name.as_str(), "href" | "id" | "aria-label") {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "inline links support href, id and aria-label",
+                ));
+            }
+        }
+
+        let id = element
+            .attribute("id")
+            .map(|a| a.expression())
+            .transpose()?
+            .map_or_else(
+                || quote!(#rake::gpui::ElementId::from(("rake::view:inline-link", #link_index))),
+                |id| quote!(#id),
+            );
+
+        let label = element
+            .attribute("aria-label")
+            .map(|a| a.expression())
+            .transpose()?
+            .map_or_else(
+                || quote!(None),
+                |label| {
+                    let label =
+                        element.resolve_into(quote!(#rake::gpui::SharedString), label, rake);
+
+                    quote!(Some((#label).into()))
+                },
+            );
+
+        let children = inline_children(
+            &element.children,
+            content,
+            inherited,
+            element.reactive_context.as_ref(),
+            rake,
+            next,
+        )?;
+
+        let inspect = link_inspector(element, rake, link_index);
+
+        return Ok(
+            quote!({ let __rake_link_start = #content.text_len(); #children #content.link(__rake_link_start, #href, #id, #label, #inspect); }),
+        );
     }
 
     if element.tag.is_ident("br") {
@@ -216,7 +323,15 @@ pub(super) fn inline_element(
 
     *next += 1;
     let local = format_ident!("__rake_inline_style_{index}", span = Span::mixed_site());
-    let children = inline_children(&element.children, content, &local, rake, next)?;
+
+    let children = inline_children(
+        &element.children,
+        content,
+        &local,
+        element.reactive_context.as_ref(),
+        rake,
+        next,
+    )?;
 
     Ok(quote!({
         let #local = #style;
@@ -327,4 +442,12 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
     let mapped = format_ident!("__rake_inline_builder", span = Span::mixed_site());
 
     Ok(StylePlan::always(methods).emit_base(&mapped))
+}
+
+fn link_inspector(element: &Element, rake: &TokenStream, index: usize) -> TokenStream {
+    let definition = element.inspection_definition(rake, index);
+
+    quote!(|__rake_link, __rake_focus| #rake::__private::inspection!(__rake_link,
+        |__rake_link| #rake::__private::view_inspect(__rake_link, #definition, true).when_some(__rake_focus, |element, focus| element.focus_handle(focus)).into_any_element(),
+        |__rake_link| __rake_link.into_any_element()))
 }
