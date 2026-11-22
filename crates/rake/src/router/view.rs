@@ -455,8 +455,32 @@ impl<R: Route> RouteOutlet<R> {
     }
 }
 
+fn install_link_router<R: Route>(navigator: Navigator<R>, window: &Window, cx: &mut gpui::App) {
+    rake_ui::view::install_link_router(window, cx, move |href, cx| {
+        let destination = match R::from_uri(href) {
+            Ok(destination) => destination,
+            Err(error) => {
+                crate::warn!(href = %href, error = ?error, "app link route could not be decoded");
+
+                return;
+            }
+        };
+
+        let operation = navigator.open(destination, super::OpenTarget::CurrentTab);
+        let href = href.to_owned();
+
+        cx.spawn(async move |_| {
+            if let Err(error) = operation.wait().await {
+                crate::warn!(href = %href, error = ?error, "app link navigation failed");
+            }
+        })
+        .detach();
+    });
+}
+
 impl<R: Route> RenderOnce for RouteOutlet<R> {
-    fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        install_link_router(self.navigator.for_window(self.window), window, cx);
         let router = self.navigator.runtime().ok();
 
         let view = router.as_ref().and_then(|router| {
@@ -921,6 +945,8 @@ impl<R: Route> Render for Workspace<R> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = self.router.presented_snapshot(self.window);
         let navigator = self.router.navigator().for_window(self.window);
+
+        install_link_router(navigator.clone(), window, cx);
 
         if matches!(
             snapshot.quit.phase,

@@ -256,10 +256,7 @@ fn paragraphs_compose_inline_content_and_reject_layout_or_interactive_children()
     for (source, expected) in [
         ("<p><div/></p>", "place layout elements"),
         ("<p><Card/></p>", "place layout elements"),
-        (
-            "<p><a href=\"https://example.com\">\"Link\"</a></p>",
-            "place layout elements",
-        ),
+        ("<p><a>\"Link\"</a></p>", "a requires href"),
         ("<p><span id=\"inline\">\"Text\"</span></p>", "inline IDs"),
         (
             "<p><span class=\"text-xl\">\"Text\"</span></p>",
@@ -274,6 +271,32 @@ fn paragraphs_compose_inline_content_and_reject_layout_or_interactive_children()
         let error = expand(source).expect_err(source).to_string();
 
         assert!(error.contains(expected), "{source}: {error}");
+    }
+}
+
+#[test]
+fn inline_loop_links_require_explicit_ids() {
+    for source in [
+        r#"<p>for item in items { <a href="/">"Home"</a> }</p>"#,
+        r#"<h2>for item in items { <strong>if visible { match item { _ => { <a href="/">"Home"</a> } } }</strong> }</h2>"#,
+    ] {
+        let error = expand(source).expect_err(source);
+
+        assert!(
+            error
+                .to_string()
+                .contains("inline <a> in a for loop requires an explicit stable id")
+        );
+    }
+
+    for source in [
+        r#"<p>for item in items { <span><a id={item.id} href="/">"Home"</a></span> }</p>"#,
+        r#"<p>for label in labels { {label} } <a href="/">"Home"</a></p>"#,
+        r#"<div>for item in items { <p id={item.id}><a href="/">"Home"</a></p> }</div>"#,
+    ] {
+        let expanded = expand(source).expect(source);
+
+        syn::parse2::<syn::Expr>(expanded).expect("one view expression");
     }
 }
 
@@ -745,4 +768,17 @@ fn file_drag_over_classes_merge_with_the_external_paths_payload() {
     assert!(expanded.contains("renamed::gpui::ExternalPaths>"));
     assert!(expanded.contains(".opacity(0.5"));
     assert!(expanded.contains(".border_2()"));
+}
+
+#[test]
+fn links_and_selectable_text_expand() {
+    for source in [
+        r#"<p select-text>Before <strong>bold</strong> <a id="route-link" href="/notes/1" aria-label="A route">a route</a></p>"#,
+        r#"<h1 class="select-text">Heading</h1>"#,
+        r#"<a href="https://example.org">External</a>"#,
+    ] {
+        syn::parse2::<syn::Expr>(expand(source).expect("link markup")).expect("valid Rust");
+    }
+
+    assert!(expand(r#"<a>missing href</a>"#).is_err());
 }
