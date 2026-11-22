@@ -7182,6 +7182,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "slotmap",
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
@@ -7496,6 +7497,8 @@ version = "0.1.0-alpha.4"
 dependencies = [
  "futures",
  "gpui-base",
+ "gpui-fast",
+ "gpui-fast-platform",
  "gpui-pre",
  "gpui-pre-platform",
  "objc2 0.6.5",
@@ -7612,6 +7615,7 @@ dependencies = [
  "gpui-fast",
  "gpui-kit",
  "gpui-pre",
+ "rake-macros",
  "tracing",
  "unicode-segmentation",
 ]

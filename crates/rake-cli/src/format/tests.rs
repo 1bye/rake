@@ -473,3 +473,13 @@ fn assert_closing_line(layout: &rake_view_syntax::Layout, path: &Path) {
         assert_closing_line(child, path);
     }
 }
+
+#[test]
+fn reactive_context_prefix_is_preserved() {
+    let output = formatted(
+        r#"fn main() { view! { app /* context */ => <section><p>{count}</p></section> }; }"#,
+    );
+
+    assert!(output.contains("app /* context */ => <section>"));
+    assert!(output.contains("<section>\n"));
+}

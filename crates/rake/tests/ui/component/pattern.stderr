@@ -1,0 +1,5 @@
+error: use a named component property
+ --> tests/ui/component/pattern.rs:3:5
+  |
+3 |     (first, second): (i32, i32),
+  |     ^^^^^^^^^^^^^^^

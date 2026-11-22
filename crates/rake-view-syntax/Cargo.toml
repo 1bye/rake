@@ -11,6 +11,9 @@ description = "Internal view syntax for matching Rake versions; no external stab
 [lints]
 workspace = true
 
+[features]
+reactive = []
+
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"

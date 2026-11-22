@@ -21,7 +21,13 @@ struct Host {
 }
 
 impl Render for Host {
-    fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let _ = &window;
+
         let content = rake::view! {
             <section>
                 if self.shown {
@@ -58,7 +64,11 @@ impl Render for Host {
 
         rake::view! {
             <OverlayHost state={self.overlays.clone()} body={gpui::Empty.into_any_element()}>
-                <Dialog state={self.dialog.clone()} title={"Virtual records".into()} footer={None}>
+                <Dialog
+                    state={self.dialog.clone()}
+                    title={gpui::SharedString::from("Virtual records")}
+                    footer={None}
+                >
                     {content}
                 </Dialog>
             </OverlayHost>

@@ -1,0 +1,5 @@
+error: reading a signal in setup is not reactive; move it into view! or cx.memo
+ --> tests/ui/component/setup_read.rs:4:20
+  |
+4 |     let snapshot = count.get(cx);
+  |                    ^^^^^^^^^^^^^

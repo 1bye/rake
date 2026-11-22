@@ -8,6 +8,9 @@
 //! GPUI overlays, transforms, rounded masks and ancestor opacity cannot affect them.
 //! See the crate README for composition and keyboard-focus boundaries.
 
+#[cfg(all(target_os = "macos", feature = "gpui-fast"))]
+extern crate gpui_fast as gpui;
+
 /// AppKit controls and view hosting. All native objects stay on the main thread.
 #[cfg(target_os = "macos")]
 pub mod macos;

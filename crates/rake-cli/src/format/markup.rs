@@ -74,10 +74,14 @@ fn format_once(source: &str, rustfmt: &mut Rustfmt) -> Result<(String, Vec<Probl
         let root = renderer.render(layout, indent)?;
         let range = renderer.range(layout);
 
-        let before = renderer.gap(
-            start..range.start,
-            &format!("\n{}", renderer.rustfmt.indent(indent)),
-        );
+        let before = if view.has_context_prefix() {
+            source[start..range.start].to_owned()
+        } else {
+            renderer.gap(
+                start..range.start,
+                &format!("\n{}", renderer.rustfmt.indent(indent)),
+            )
+        };
 
         let after = renderer.gap(
             range.end..end,

@@ -4,6 +4,10 @@
 //! Requires: gpui; no display or GPU.
 
 #![cfg(feature = "gpui")]
+#![cfg(any(not(feature = "experimental-reactive"), feature = "view-test-support"))]
+#[macro_use]
+#[path = "common/view_context.rs"]
+mod view_context;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,11 +23,15 @@ enum Tone {
     Highlighted,
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, rake::Props)]
 struct Badge {
+    #[prop(no_into)]
     id: ElementId,
+    #[prop(no_into)]
     label: String,
+    #[prop(no_into)]
     tone: Tone,
+    #[prop(no_into)]
     on_activate: Box<dyn Fn()>,
 }
 
@@ -45,11 +53,15 @@ impl RenderOnce for Badge {
 mod ui {
     use super::*;
 
-    #[derive(IntoElement)]
+    #[derive(IntoElement, rake::Props)]
     pub(super) struct Card {
+        #[prop(no_into)]
         pub id: ElementId,
+        #[prop(no_into)]
         pub header: AnyElement,
+        #[prop(no_into)]
         pub footer: Option<AnyElement>,
+        #[prop(no_into)]
         pub children: Vec<AnyElement>,
     }
 
@@ -66,147 +78,163 @@ mod ui {
 
 #[test]
 fn properties_keep_their_types_and_move_owned_values_once() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let activated = calls.clone();
-    let label = String::from("Experimental");
+    with_view_context!(window, cx, {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let activated = calls.clone();
+        let label = String::from("Experimental");
 
-    let badge = rake::view! {
-        <Badge
-            id={"status".into()}
-            label={label}
-            tone={Tone::Highlighted}
-            on_activate={Box::new(move || activated.borrow_mut().push("activated"))}
-        />
-    };
+        let badge = rake::view! {
+            <Badge
+                id={"status".into()}
+                label={label}
+                tone={Tone::Highlighted}
+                on_activate={Box::new(move || activated.borrow_mut().push("activated"))}
+            />
+        };
 
-    assert_eq!(badge.id, ElementId::from("status"));
-    assert_eq!(badge.label, "Experimental");
-    assert_eq!(badge.tone, Tone::Highlighted);
-    (badge.on_activate)();
-    assert_eq!(*calls.borrow(), ["activated"]);
+        assert_eq!(badge.id, ElementId::from("status"));
+        assert_eq!(badge.label, "Experimental");
+        assert_eq!(badge.tone, Tone::Highlighted);
+        (badge.on_activate)();
+        assert_eq!(*calls.borrow(), ["activated"]);
+    });
 }
 
 #[test]
 fn paired_components_collect_selected_children_and_typed_slots_in_order() {
-    let visited = RefCell::new(Vec::new());
+    with_view_context!(window, cx, {
+        let visited = &RefCell::new(Vec::new());
 
-    let mut card = rake::view! {
-        <ui::Card
-            id={
-                {
-                    visited.borrow_mut().push(0);
-                    "card".into()
-                }
-            }
-            header={
-                {
-                    visited.borrow_mut().push(1);
-                    gpui::div().id("header").into_any_element()
-                }
-            }
-            footer={
-                {
-                    visited.borrow_mut().push(2);
-                    None
-                }
-            }
-        >
-            {
-                {
-                    visited.borrow_mut().push(3);
-                    "Body"
-                }
-            }
-            if false {
-                {unreachable_child()}
-            } else {
-                <p id="selected">
+        let mut card = rake::view! {
+            <ui::Card
+                id={
                     {
-                        {
-                            visited.borrow_mut().push(4);
-                            "Selected"
-                        }
+                        visited.borrow_mut().push(0);
+                        "card".into()
                     }
-                </p>
-            }
-            for index in 0..2usize {
-                <div id={("row", index)}>
+                }
+                header={
                     {
-                        {
-                            visited.borrow_mut().push(5 + index);
-                            "Row"
-                        }
+                        visited.borrow_mut().push(1);
+                        gpui::div().id("header").into_any_element()
                     }
-                </div>
-            }
-        </ui::Card>
-    };
+                }
+                footer={
+                    {
+                        visited.borrow_mut().push(2);
+                        None
+                    }
+                }
+            >
+                {
+                    {
+                        visited.borrow_mut().push(3);
+                        "Body"
+                    }
+                }
+                if false {
+                    {unreachable_child()}
+                } else {
+                    <p id="selected">
+                        {
+                            {
+                                visited.borrow_mut().push(4);
+                                "Selected"
+                            }
+                        }
+                    </p>
+                }
+                for index in 0..2usize {
+                    <div id={("row", index)}>
+                        {
+                            {
+                                visited.borrow_mut().push(5 + index);
+                                "Row"
+                            }
+                        }
+                    </div>
+                }
+            </ui::Card>
+        };
 
-    assert_eq!(*visited.borrow(), [0, 1, 2, 3, 4, 5, 6]);
-    assert_eq!(card.id, ElementId::from("card"));
-    assert_eq!(card.children.len(), 4);
-    assert!(card.footer.is_none());
+        assert_eq!(*visited.borrow(), [0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(card.id, ElementId::from("card"));
+        assert_eq!(card.children.len(), 4);
+        assert!(card.footer.is_none());
 
-    let text = card.children[0]
-        .downcast_mut::<rake::inspection::Inspected<gpui::Text>>()
-        .expect("accessible child text");
+        let text = card.children[0]
+            .downcast_mut::<rake::inspection::Inspected<gpui::Text>>()
+            .expect("accessible child text");
 
-    let mut info = gpui::accesskit::Node::new(gpui::accesskit::Role::Label);
+        let mut info = gpui::accesskit::Node::new(gpui::accesskit::Role::Label);
 
-    text.write_a11y_info(&mut info);
+        text.write_a11y_info(&mut info);
 
-    assert_eq!(info.value(), Some("Body"));
-    assert!(
-        card.header
-            .downcast_mut::<gpui::Stateful<gpui::Div>>()
-            .is_some()
-    );
+        assert_eq!(info.value(), Some("Body"));
+        assert!(
+            card.header
+                .downcast_mut::<gpui::Stateful<gpui::Div>>()
+                .is_some()
+        );
+    });
 }
 
 #[test]
 fn empty_paired_tags_and_explicit_children_accept_empty_vectors() {
-    let paired = rake::view! {
-        <ui::Card id={"paired".into()} header={gpui::div().into_any_element()} footer={None}>
-        </ui::Card>
-    };
+    with_view_context!(window, cx, {
+        let paired = rake::view! {
+            <ui::Card id={"paired".into()} header={gpui::div().into_any_element()} footer={None}>
+            </ui::Card>
+        };
 
-    let explicit = rake::view! {
-        <ui::Card
-            id={"explicit".into()}
-            header={gpui::div().into_any_element()}
-            footer={None}
-            children={Vec::new()}
-        />
-    };
+        let explicit = rake::view! {
+            <ui::Card
+                id={"explicit".into()}
+                header={gpui::div().into_any_element()}
+                footer={None}
+                children={Vec::new()}
+            />
+        };
 
-    assert!(paired.children.is_empty());
-    assert!(explicit.children.is_empty());
+        assert!(paired.children.is_empty());
+        assert!(explicit.children.is_empty());
+    });
 }
 
 #[cfg(debug_assertions)]
 #[test]
 fn duplicate_authored_children_are_diagnosed_before_component_rendering() {
-    let duplicate = std::panic::catch_unwind(|| {
-        rake::view! {
-            <ui::Card id={"duplicate".into()} header={gpui::div().into_any_element()} footer={None}>
-                <p id="same">"First"</p>
-                <p id="same">"Second"</p>
-            </ui::Card>
-        }
-    });
+    with_view_context!(window, cx, {
+        let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rake::view! {
+                <ui::Card
+                    id={"duplicate".into()}
+                    header={gpui::div().into_any_element()}
+                    footer={None}
+                >
+                    <p id="same">"First"</p>
+                    <p id="same">"Second"</p>
+                </ui::Card>
+            }
+        }));
 
-    assert!(duplicate.is_err());
+        assert!(duplicate.is_err());
+    });
 }
 
 fn unreachable_child() -> &'static str {
     panic!("untaken component child")
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, rake::Props)]
 struct DefaultsPanel {
+    #[prop(no_into)]
     id: ElementId,
+    #[prop(no_into)]
     compact: bool,
+    #[prop(no_into)]
     footer: Option<AnyElement>,
+    #[prop(no_into)]
     children: Vec<AnyElement>,
 }
 
@@ -232,135 +260,141 @@ impl RenderOnce for DefaultsPanel {
 
 #[test]
 fn component_shorthand_booleans_defaults_and_match_children_compose() {
-    let id = ElementId::from("panel");
-    let seen = RefCell::new(Vec::new());
+    with_view_context!(window, cx, {
+        let id = ElementId::from("panel");
+        let seen = &RefCell::new(Vec::new());
 
-    let panel = rake::view! {
-        <DefaultsPanel
-            {id}
-            compact
-            {
-                ..{
-                    seen.borrow_mut().push("defaults");
-                    DefaultsPanel::default()
+        let panel = rake::view! {
+            <DefaultsPanel
+                {id}
+                compact
+                {
+                    ..{
+                        seen.borrow_mut().push("defaults");
+                        DefaultsPanel::default()
+                    }
                 }
-            }
-        >
-            match Some("Body") {
-                Some(label) if !label.is_empty() => {
-                    <p>
-                        {
+            >
+                match Some("Body") {
+                    Some(label) if !label.is_empty() => {
+                        <p>
                             {
-                                seen.borrow_mut().push("child");
-                                label
+                                {
+                                    seen.borrow_mut().push("child");
+                                    label
+                                }
                             }
-                        }
-                    </p>
+                        </p>
+                    }
+                    _ => {
+                        <p>"Empty"</p>
+                    }
                 }
-                _ => {
-                    <p>"Empty"</p>
-                }
-            }
-        </DefaultsPanel>
-    };
+            </DefaultsPanel>
+        };
 
-    assert_eq!(panel.id, ElementId::from("panel"));
-    assert!(panel.compact);
-    assert!(panel.footer.is_none());
-    assert_eq!(panel.children.len(), 1);
-    assert_eq!(*seen.borrow(), ["child", "defaults"]);
-    let panel = rake::view! {
-        <DefaultsPanel compact {..DefaultsPanel::default()} />
-    };
+        assert_eq!(panel.id, ElementId::from("panel"));
+        assert!(panel.compact);
+        assert!(panel.footer.is_none());
+        assert_eq!(panel.children.len(), 1);
+        assert_eq!(*seen.borrow(), ["child", "defaults"]);
+        let panel = rake::view! {
+            <DefaultsPanel compact {..DefaultsPanel::default()} />
+        };
 
-    assert!(panel.compact);
-    assert!(panel.children.is_empty());
+        assert!(panel.compact);
+        assert!(panel.children.is_empty());
+    });
 }
 
 #[test]
 fn markup_slots_convert_to_any_element_and_evaluate_once_before_children() {
-    let seen = RefCell::new(Vec::new());
-    let title = String::from("Profile");
+    with_view_context!(window, cx, {
+        let seen = &RefCell::new(Vec::new());
+        let title = String::from("Profile");
 
-    let mut card = rake::view! {
-        <ui::Card
-            id={
-                {
-                    seen.borrow_mut().push(0);
-                    "inline-slots".into()
+        let mut card = rake::view! {
+            <ui::Card
+                id={
+                    {
+                        seen.borrow_mut().push(0);
+                        "inline-slots".into()
+                    }
                 }
-            }
-            header={
-                <h2>
+                header={
+                    <h2>
+                        {
+                            {
+                                seen.borrow_mut().push(1);
+                                title
+                            }
+                        }
+                    </h2>
+                }
+                footer={
+                    {
+                        seen.borrow_mut().push(2);
+                        None
+                    }
+                }
+            >
+                <p>
                     {
                         {
-                            seen.borrow_mut().push(1);
-                            title
+                            seen.borrow_mut().push(3);
+                            "Account details"
                         }
                     }
-                </h2>
-            }
-            footer={
-                {
-                    seen.borrow_mut().push(2);
-                    None
-                }
-            }
-        >
-            <p>
-                {
-                    {
-                        seen.borrow_mut().push(3);
-                        "Account details"
-                    }
-                }
-            </p>
-        </ui::Card>
-    };
+                </p>
+            </ui::Card>
+        };
 
-    assert_eq!(*seen.borrow(), [0, 1, 2, 3]);
-    assert_eq!(card.children.len(), 1);
+        assert_eq!(*seen.borrow(), [0, 1, 2, 3]);
+        assert_eq!(card.children.len(), 1);
 
-    let heading = card
-        .header
-        .downcast_mut::<rake::inspection::Inspected<gpui::Stateful<gpui::Div>>>()
-        .expect("markup slot preserves its GPUI heading semantics through inspection");
+        let heading = card
+            .header
+            .downcast_mut::<rake::inspection::Inspected<gpui::Stateful<gpui::Div>>>()
+            .expect("markup slot preserves its GPUI heading semantics through inspection");
 
-    let mut info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+        let mut info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
 
-    heading.write_a11y_info(&mut info);
+        heading.write_a11y_info(&mut info);
 
-    assert_eq!(info.label(), Some("Profile"));
+        assert_eq!(info.label(), Some("Profile"));
+    });
 }
 
 #[test]
 fn nested_markup_slots_accept_component_roots() {
-    let card = rake::view! {
-        <ui::Card
-            id={"outer".into()}
-            footer={None}
-            header={
-                <ui::Card
-                    id={"inner".into()}
-                    header={
-                        <h2>Inner</h2>
-                    }
-                    footer={None}
-                >
-                    <p>Nested body</p>
-                </ui::Card>
-            }
-        >
-            if false {
-                <p>Untaken</p>
-            }
-            <p>Outer body</p>
-        </ui::Card>
-    };
+    with_view_context!(window, cx, {
+        let card = rake::view! {
+            <ui::Card
+                id={"outer".into()}
+                footer={None}
+                header={
+                    <ui::Card
+                        id={"inner".into()}
+                        header={
+                            <h2>Inner</h2>
+                        }
+                        footer={None}
+                    >
+                        <p>Nested body</p>
+                    </ui::Card>
+                }
+            >
+                if false {
+                    <p>Untaken</p>
+                }
+                <p>Outer body</p>
+            </ui::Card>
+        };
 
-    assert_eq!(card.children.len(), 1);
-    #[cfg(feature = "devtools")]
-    let card = card.into_inner();
+        assert_eq!(card.children.len(), 1);
+        #[cfg(feature = "devtools")]
+        let card = card.into_inner();
 
-    let _: AnyElement = card.header;
+        let _: AnyElement = card.header;
+    });
 }

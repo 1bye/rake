@@ -69,7 +69,8 @@ fn router_for(
 
 fn draw(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle<BoundaryHost>) {
     cx.run_until_parked();
-    cx.update_window(window.into(), |_, window, cx| {
+    cx.update_window(window.into(), |root, window, cx| {
+        cx.notify(root.entity_id());
         window.draw(cx).clear(cx);
     })
     .unwrap();

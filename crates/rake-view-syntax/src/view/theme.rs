@@ -121,7 +121,7 @@ pub(super) fn used(element: &Element) -> Option<Span> {
         .or_else(|| nodes_use(&element.children))
 }
 
-fn nodes_use(nodes: &[Node]) -> Option<Span> {
+pub(super) fn nodes_use(nodes: &[Node]) -> Option<Span> {
     nodes.iter().find_map(|node| match node {
         Node::Element(element) => used(element),
         Node::If {

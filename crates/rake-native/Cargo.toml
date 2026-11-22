@@ -12,11 +12,13 @@ description = "Optional AppKit components hosted in Rake's GPUI layouts"
 workspace = true
 
 [features]
+gpui-fast = ["dep:gpui_fast", "gpui-base/gpui-fast"]
 # Opens a real AppKit/GPUI window; excluded from the default headless suite.
 native-tests = []
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui = { workspace = true }
+gpui_fast = { workspace = true, optional = true }
 objc2 = "0.6.5"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSGeometry", "NSArray", "NSEnumerator", "NSNotification"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSView", "NSResponder", "NSControl", "NSButton", "NSButtonCell", "NSCell", "NSImage", "NSSegmentedControl", "NSSegmentedCell", "NSGlassEffectView", "NSLayoutConstraint", "NSAccessibilityConstants", "NSAccessibilityProtocols", "NSAccessibility", "NSWindow", "objc2-quartz-core", "objc2-core-foundation"] }
@@ -27,6 +29,7 @@ raw-window-handle = "0.6"
 futures.workspace = true
 gpui-base.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
+gpui_fast_platform = { workspace = true, features = ["font-kit"] }
 
 [[test]]
 name = "appkit"
