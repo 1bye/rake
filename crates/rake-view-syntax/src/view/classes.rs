@@ -310,6 +310,10 @@ pub(super) fn utility_methods(
     span: Span,
     rake: &TokenStream,
 ) -> syn::Result<TokenStream> {
+    if class == "select-text" {
+        return Ok(TokenStream::new());
+    }
+
     if let Some(name) = class.strip_prefix("group/") {
         if name.is_empty() {
             return Err(syn::Error::new(span, "group utility requires a name"));
@@ -434,7 +438,7 @@ pub(super) fn utility_plan(
     if utility.starts_with("group/")
         || matches!(
             utility,
-            "overflow-scroll" | "overflow-x-scroll" | "overflow-y-scroll"
+            "select-text" | "overflow-scroll" | "overflow-x-scroll" | "overflow-y-scroll"
         )
     {
         return Err(syn::Error::new(

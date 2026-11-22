@@ -113,6 +113,7 @@ silently registered. Repeated presses may be coalesced while the UI is busy.
   the portal owns conflict resolution and user-approved bindings. Closing the
   private D-Bus connection ends the session on unregister/drop, including pending
   authorization. A missing portal returns Unsupported. Rake never bypasses it.
+- On X11, an unset display returns Unsupported; connection failures retain the native diagnostic.
 - Web, headless builds and hosts without the feature return explicit Unsupported.
   `capabilities().global_shortcuts` reports support. On Linux it starts false;
   await `global_shortcuts().available()` to refresh that shared capability snapshot
@@ -121,3 +122,40 @@ silently registered. Repeated presses may be coalesced while the UI is busy.
 Native registration, conflict and cleanup probes run in macOS/Windows CI and
 under an isolated X11 display in Linux CI. They do not establish real key presses,
 Wayland compositor authorization, or cross-application focus behavior.
+
+## Secrets
+
+`platform.secrets()?` uses the application id configured in `App::new`. A
+platform without a configured id returns `Error::MissingApplicationId`. With
+`gpui`, call `read(name, cx)`, `write(name, token.into(), cx)` or
+`delete(name, cx)` and await the returned `Request`. `Secret` takes ownership
+of a `String` or `Vec<u8>` without copying its bytes. Missing reads return
+`None` and missing deletes succeed. Calls initiate GPUI tasks immediately.
+Native keychain work runs on its background executor and may prompt.
+Dropping a request cannot undo an initiated write.
+
+Keep the application id stable across restarts and use non-secret names. Ids
+and names must each be 1–128 UTF-8 bytes.
+The URL key is `rake-secret://v1/<hex UTF-8 app id>/<hex UTF-8 name>`;
+the username is always `rake-secret-v1`. Encoding is case-sensitive and injective.
+Each name needs its own URL because GPUI reads/deletes by URL alone. Namespacing
+prevents accidental app collisions, not access by another process using the same id.
+
+| Host | Backend and errors |
+| --- | --- |
+| macOS | System Keychain. Typed cancellation/authentication failure maps to `SecretAccessDenied`; OSStatus -25308 maps to `KeychainLocked` (interaction unavailable, including locked/headless sessions). Other failures are `SecretsUnavailable`. |
+| Windows | Credential Manager. Values above 2560 bytes return `SecretSizeLimit`. Typed access-denied errors from reads/deletes map to `SecretAccessDenied`; GPUI converts write errors to text, so those become `SecretsUnavailable`. Missing deletes are normalized from ERROR_NOT_FOUND. |
+| Linux | GPUI uses oo7 and the session Secret Service. Typed locked/dismissed errors map to `KeychainLocked`/`SecretAccessDenied`; typed D-Bus ServiceUnknown maps to `NoSecretService`. Other connection/unlock failures return `SecretsUnavailable`; absence cannot always be distinguished from an unreachable session bus. |
+| Web | Always `SecretsUnavailable`; no localStorage or other fallback. |
+
+Backend error text is discarded rather than risking content in logs. `Secret`
+has redacted Debug, no Display or serialization, and zeroizes its owned bytes on
+drop using zeroize. GPUI and OS intermediate copies are outside this guarantee.
+`expose()` is an explicit escape hatch: callers must never log, serialize, inspect,
+or place those bytes in preferences, view state or diagnostic fields. The service
+registers no storage, CDP or DevTools inspection provider and emits no tracing events.
+This does not encrypt Store data or implement biometric prompts.
+
+The desktop example has Store, Check and Delete demo-token buttons. Store once,
+restart the app, then Check to exercise persistence; Delete afterwards. It displays
+only presence and sanitized errors. Never use a production token for this demo.

@@ -754,7 +754,7 @@ fn boolean_attribute(tag: Tag, name: &str) -> bool {
     tag == Tag::Component
         || matches!(
             name,
-            "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
+            "select-text" | "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
         )
 }
 
@@ -1068,6 +1068,11 @@ impl View {
 }
 
 impl Element {
+    /// Whether this element starts an inline text flow.
+    pub fn composes_text(&self) -> bool {
+        self.resolved.composes_text()
+    }
+
     fn is_component(&self) -> bool {
         self.resolved == Tag::Component
     }
@@ -1375,8 +1380,10 @@ impl Element {
 
                 builder
             }
-            Tag::Paragraph => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
-                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
+            Tag::Paragraph | Tag::Link => {
+                quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
+                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph))
+            }
             Tag::Heading(level) => {
                 let level = level as usize;
 
@@ -1502,6 +1509,23 @@ impl Element {
                 continue;
             }
 
+            if attribute.name == "class"
+                && !matches!(self.resolved, Tag::Paragraph | Tag::Heading(_))
+                && matches!(value, Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(text), .. }) if text.value().split_whitespace().any(|class| class == "select-text"))
+            {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "select-text belongs on paragraphs and headings",
+                ));
+            }
+
+            if attribute.name == "class:select-text" {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "use select-text={condition} on paragraphs and headings",
+                ));
+            }
+
             if attribute.name == "class" || attribute.name.starts_with("class:") {
                 let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
                     utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?
@@ -1562,6 +1586,7 @@ impl Element {
 
                     quote!(.aria_label(#value))
                 }
+                "aria-label" if self.resolved == Tag::Link => TokenStream::new(),
                 "aria-label" | "aria-description" | "aria-keyshortcuts" => {
                     let method = format_ident!("{}", attribute.name.replace('-', "_"));
                     let value = self.resolve_into(quote!(#rake::gpui::SharedString), value, rake);
@@ -1585,6 +1610,10 @@ impl Element {
 
                     quote!(.track_scroll(#value))
                 }
+                "select-text" if matches!(self.resolved, Tag::Paragraph | Tag::Heading(_)) => {
+                    TokenStream::new()
+                }
+                "href" if self.resolved == Tag::Link => TokenStream::new(),
                 "wrap" if self.resolved.composes_text() => {
                     let value = self.resolve_value(quote!(bool), value, rake);
 

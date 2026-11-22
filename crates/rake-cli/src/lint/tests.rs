@@ -104,6 +104,31 @@ fn loop_rules_visit_branches_and_nested_loops() {
 }
 
 #[test]
+fn inline_loop_links_need_stable_keys() {
+    let markup = r#"<p>for item in items { <strong>if visible { match item { _ => { <a href="/">Home</a> } } }</strong> }</p>"#;
+    let diagnostics = check(markup);
+
+    assert_eq!(ids(&diagnostics), [INDEX]);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("requires an explicit stable id")
+    );
+
+    let positional = r#"<p>for (i, item) in items.enumerate() { <a id={i} href="/">Home</a> }</p>"#;
+
+    assert_eq!(ids(&check(positional)), [INDEX]);
+
+    for markup in [
+        r#"<p>for item in items { <a id={item.id} href="/">Home</a> }</p>"#,
+        r#"<p>for item in items { {item} } <a href="/">Home</a></p>"#,
+        r#"<div>for item in items { <p id={item.id}><a href="/">Home</a></p> }</div>"#,
+    ] {
+        assert!(check(markup).is_empty(), "{markup}");
+    }
+}
+
+#[test]
 fn component_slots_and_nested_view_macros_are_checked_once() {
     assert_eq!(
         ids(&check(
@@ -1199,4 +1224,25 @@ fn deep_file_suppressions_defer_unused_checks_until_the_deep_tier_runs() {
     let used = filter_diagnostics_with_deep(file, text, &Levels::new(), vec![finding], false, true);
 
     assert!(used.is_empty());
+}
+
+#[test]
+fn links_require_visible_text_or_explicit_name() {
+    for markup in [
+        r#"<a href="/"/>"#,
+        r#"<a href="/">" "</a>"#,
+        r#"<a href="/" aria-label=" "/>"#,
+        r#"<p><a href="/">{title}</a></p>"#,
+    ] {
+        assert_eq!(ids(&check(markup)), [catalogue::LINK], "{markup}");
+    }
+
+    for markup in [
+        r#"<a href="/">Home</a>"#,
+        r#"<p><a href="/"><strong>Home</strong></a></p>"#,
+        r#"<a href="/" aria-label="Home">{title}</a>"#,
+        r#"<a href="/" aria-label={title}/>"#,
+    ] {
+        assert!(check(markup).is_empty(), "{markup}");
+    }
 }

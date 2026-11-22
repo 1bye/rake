@@ -11,7 +11,7 @@ use syn::visit::{self, Visit};
 use syn::{Expr, Pat, Token};
 
 use super::Diagnostic;
-use super::catalogue::{BUTTON, IMAGE, INDEX, STYLE, SYNTAX, THEME};
+use super::catalogue::{BUTTON, IMAGE, INDEX, LINK, STYLE, SYNTAX, THEME};
 use super::design;
 pub(super) use super::design::installs_theme;
 
@@ -59,7 +59,7 @@ impl Checker<'_> {
         }
     }
 
-    fn element(&mut self, element: &Element, indices: &[String]) {
+    fn element(&mut self, element: &Element, indices: &[String], inline_loop: Option<bool>) {
         let has = |name| {
             element
                 .attributes
@@ -83,6 +83,34 @@ impl Checker<'_> {
             self.emit(BUTTON, element.tag.span());
         }
 
+        if element.tag.is_ident("a") {
+            if inline_loop == Some(true) && !has("id") {
+                let mut diagnostic = Diagnostic::new(INDEX, self.file, element.tag.span());
+
+                diagnostic.message =
+                    "inline <a> in a for loop requires an explicit stable id".into();
+                self.diagnostics.push(diagnostic);
+            }
+
+            let explicit = element.attributes.iter().any(|attribute| {
+                attribute.name == "aria-label"
+                    && match &attribute.value {
+                        AttributeValue::Expression(value) => match value.as_ref() {
+                            Expr::Lit(value) => match &value.lit {
+                                syn::Lit::Str(text) => !text.value().trim().is_empty(),
+                                _ => true,
+                            },
+                            _ => true,
+                        },
+                        _ => true,
+                    }
+            });
+
+            if !explicit && !link_text(&element.children) {
+                self.emit(LINK, element.tag.span());
+            }
+        }
+
         if element.tag.is_ident("img") && !has("alt") {
             self.emit(IMAGE, element.tag.span());
         }
@@ -91,7 +119,7 @@ impl Checker<'_> {
             && [
                 "div", "section", "span", "nav", "header", "footer", "main", "aside", "article",
                 "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "button", "img", "svg",
-                "hr", "strong", "em",
+                "hr", "strong", "em", "a",
             ]
             .iter()
             .any(|name| element.tag.is_ident(name));
@@ -156,17 +184,19 @@ impl Checker<'_> {
 
                     self.visit_expr(expression);
                 }
-                AttributeValue::Markup(element) => self.element(element, indices),
+                AttributeValue::Markup(element) => self.element(element, indices, None),
             }
         }
 
-        self.nodes(&element.children, indices);
+        let child_inline_loop = inline_loop.or_else(|| element.composes_text().then_some(false));
+
+        self.nodes(&element.children, indices, child_inline_loop);
     }
 
-    fn nodes(&mut self, nodes: &[Node], indices: &[String]) {
+    fn nodes(&mut self, nodes: &[Node], indices: &[String], inline_loop: Option<bool>) {
         for node in nodes {
             match node {
-                Node::Element(element) => self.element(element, indices),
+                Node::Element(element) => self.element(element, indices, inline_loop),
                 Node::Expression(expression) => self.visit_expr(expression),
                 Node::Text(_) => {}
                 Node::If {
@@ -178,8 +208,8 @@ impl Checker<'_> {
                     let mut nested = indices.to_vec();
 
                     remove_condition_bindings(condition, &mut nested);
-                    self.nodes(then_nodes, &nested);
-                    self.nodes(else_nodes, indices);
+                    self.nodes(then_nodes, &nested, inline_loop);
+                    self.nodes(else_nodes, indices, inline_loop);
                 }
                 Node::Match { expression, arms } => {
                     self.visit_expr(expression);
@@ -194,7 +224,7 @@ impl Checker<'_> {
                             remove_condition_bindings(guard, &mut nested);
                         }
 
-                        self.nodes(&arm.children, &nested);
+                        self.nodes(&arm.children, &nested, inline_loop);
                     }
                 }
                 Node::For {
@@ -215,7 +245,7 @@ impl Checker<'_> {
                         nested.push(index.ident.to_string());
                     }
 
-                    self.nodes(children, &nested);
+                    self.nodes(children, &nested, inline_loop.map(|_| true));
                 }
             }
         }
@@ -251,7 +281,7 @@ impl Checker<'_> {
                 match view.layout() {
                     Ok(layout) => {
                         attributes(layout, &mut self.attributes);
-                        self.element(view.root(), &[]);
+                        self.element(view.root(), &[], None);
                     }
                     Err(error) => self.parse_error(error),
                 }
@@ -387,4 +417,18 @@ fn format_captures(format: &str, indices: &[String]) -> bool {
     }
 
     false
+}
+
+fn link_text(children: &[Node]) -> bool {
+    children.iter().any(|child| match child {
+        Node::Text(text) => !text.value().trim().is_empty(),
+        Node::Element(element)
+            if ["span", "strong", "em"]
+                .iter()
+                .any(|name| element.tag.is_ident(name)) =>
+        {
+            link_text(&element.children)
+        }
+        _ => false,
+    })
 }

@@ -54,8 +54,14 @@ impl View {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Inline {
+    heading: bool,
+    in_loop: bool,
+}
+
 impl Element {
-    fn recover(&mut self, rake: &TokenStream, inline: Option<bool>, errors: &mut Diagnostics) {
+    fn recover(&mut self, rake: &TokenStream, inline: Option<Inline>, errors: &mut Diagnostics) {
         let mut invalid_component =
             self.resolved == Tag::Component && !self.parse_errors.is_empty();
 
@@ -84,15 +90,25 @@ impl Element {
             defaults: self.defaults.clone(),
         };
 
-        if let Some(heading) = inline {
+        if let Some(inline) = inline {
             if !Tag::is_inline_name(&self.tag) {
-                let message = if heading {
+                let message = if inline.heading {
                     HEADING_CONTENT
                 } else {
                     PARAGRAPH_CONTENT
                 };
 
                 errors.push(syn::Error::new(self.tag.span(), message));
+                self.clear_as("span");
+
+                return;
+            }
+
+            if inline.in_loop && self.tag.is_ident("a") && self.attribute("id").is_none() {
+                errors.push(syn::Error::new(
+                    self.tag.span(),
+                    "inline <a> in a for loop requires an explicit stable id, such as id={item.id}",
+                ));
                 self.clear_as("span");
 
                 return;
@@ -157,9 +173,10 @@ impl Element {
         }
 
         let child_inline = inline.or_else(|| {
-            self.resolved
-                .composes_text()
-                .then_some(matches!(self.resolved, Tag::Heading(_)))
+            self.composes_text().then_some(Inline {
+                heading: matches!(self.resolved, Tag::Heading(_)),
+                in_loop: false,
+            })
         });
 
         recover_nodes(&mut self.children, rake, child_inline, errors);
@@ -185,25 +202,25 @@ impl Element {
         probe.children.clear();
         probe.attributes = vec![attribute.clone()];
 
+        // Required properties are context, not independent errors on every attribute.
+        for (name, _) in self.resolved.required_attributes() {
+            if attribute.name != *name {
+                let value = self.attribute(name).cloned().unwrap_or_else(|| Attribute {
+                    name: (*name).into(),
+                    action: None,
+                    span: self.tag.span(),
+                    value: AttributeValue::Expression(syn::parse_quote!("")),
+                });
+
+                probe.attributes.push(value);
+            }
+        }
+
         if inline {
             let dummy = format_ident!("__rake_probe", span = Span::mixed_site());
 
             super::paragraph::inline_element(&probe, &dummy, &dummy, rake, &mut 0)?;
         } else {
-            // Required properties are context, not independent errors on every attribute.
-            for (name, _) in self.resolved.required_attributes() {
-                if attribute.name != *name {
-                    let value = self.attribute(name).cloned().unwrap_or_else(|| Attribute {
-                        name: (*name).into(),
-                        action: None,
-                        span: self.tag.span(),
-                        value: AttributeValue::Expression(syn::parse_quote!("")),
-                    });
-
-                    probe.attributes.push(value);
-                }
-            }
-
             probe.expand(rake, &mut 0)?;
         }
 
@@ -214,7 +231,7 @@ impl Element {
 fn recover_nodes(
     nodes: &mut Vec<Node>,
     rake: &TokenStream,
-    inline: Option<bool>,
+    inline: Option<Inline>,
     errors: &mut Diagnostics,
 ) {
     nodes.retain_mut(|node| {
@@ -250,7 +267,15 @@ fn recover_nodes(
                     }
                 }
 
-                recover_nodes(children, rake, inline, errors);
+                recover_nodes(
+                    children,
+                    rake,
+                    inline.map(|inline| Inline {
+                        in_loop: true,
+                        ..inline
+                    }),
+                    errors,
+                );
             }
             _ => {}
         }

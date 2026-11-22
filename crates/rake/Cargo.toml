@@ -21,7 +21,7 @@ launch-at-login = ["dep:rake-autostart"]
 tray = ["gpui", "dep:rake-tray", "global-shortcuts"]
 global-shortcuts = ["gpui", "dep:rake-shortcuts"]
 gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
-gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast", "rake-native?/gpui-fast"]
+gpui-fast = ["gpui", "dep:gpui_fast_apple", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast", "rake-native?/gpui-fast"]
 live = ["gpui", "dep:blaze-live", "dep:pathfinder_simd"]
 native-components = ["gpui", "dep:rake-native"]
 native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
@@ -29,16 +29,17 @@ updates = ["native-lifecycle"]
 updates-sparkle = ["updates", "rake-updates/sparkle"]
 updates-appimage = ["updates", "rake-updates/appimage"]
 updates-velopack = ["updates", "rake-updates/velopack"]
-devtools = ["gpui_pre?/profiler", "gpui_fast?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
+devtools = ["gpui_pre?/profiler", "gpui_fast?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
 devtools-memory = ["devtools", "dep:backtrace"]
 kit = ["gpui", "rake-ui/kit"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
 experimental-reactive = ["gpui", "rake-macros/reactive", "dep:slotmap"]
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support", "gpui_platform/runtime_shaders", "gpui_fast_platform?/runtime_shaders"]
-gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+gpui = ["dep:gpui_pre_apple", "dep:windows", "dep:oo7", "dep:zbus", "dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
+zeroize = "1"
 rake-shortcuts = { version = "=0.1.0-alpha.4", path = "../rake-shortcuts", optional = true }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
@@ -70,6 +71,10 @@ gpui_fast_platform = { workspace = true, features = ["font-kit", "wayland", "x11
 [target.'cfg(any(unix, windows))'.dependencies]
 rake-client.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"], optional = true }
+zbus = { version = "5", default-features = false, features = ["async-io"], optional = true }
+
 [target.'cfg(unix)'.dependencies]
 backtrace = { version = "0.3.76", optional = true }
 
@@ -90,6 +95,8 @@ console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+gpui_fast_apple = { package = "gpui-fast-apple", version = "=0.1.13", optional = true }
+gpui_pre_apple = { package = "gpui-pre-apple", version = "=0.3.11", optional = true }
 block2 = { version = "0.6", optional = true }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"], optional = true }
 
@@ -149,4 +156,9 @@ required-features = ["devtools"]
 name = "web-crash"
 path = "examples/web_crash.rs"
 crate-type = ["cdylib"]
+required-features = ["gpui"]
+
+[[example]]
+name = "secrets-probe"
+path = "examples/secrets_probe.rs"
 required-features = ["gpui"]
