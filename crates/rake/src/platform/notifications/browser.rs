@@ -82,6 +82,7 @@ pub(super) fn install(platform: &Platform) -> Host {
     let activations = std::rc::Rc::downgrade(&platform.activations);
     let notifications = std::rc::Rc::downgrade(&platform.notifications);
     let shortcuts = platform.shortcuts.clone();
+    let application_id = platform.application_id.clone();
     let activate = Closure::new(move |tag: String| {
         if let (Some(activations), Some(notifications)) =
             (activations.upgrade(), notifications.upgrade())
@@ -90,6 +91,7 @@ pub(super) fn install(platform: &Platform) -> Host {
 
             if let Some(payload) = payload {
                 let platform = Platform {
+                    application_id: application_id.clone(),
                     activations,
                     notifications,
                     shortcuts: shortcuts.clone(),
