@@ -1,0 +1,125 @@
+[package]
+name = "rake-gpui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
+description = "GPUI integration for the Rake application framework"
+readme = "../../README.md"
+
+[lints]
+workspace = true
+
+[features]
+default = ["gpui"]
+launch-at-login = ["rake-core/launch-at-login"]
+tray = ["gpui", "dep:rake-tray", "global-shortcuts"]
+global-shortcuts = ["gpui", "dep:rake-shortcuts"]
+gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
+gpui-fast = ["gpui", "dep:gpui_fast_apple", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast", "rake-native?/gpui-fast"]
+live = ["gpui", "dep:blaze-live", "dep:pathfinder_simd"]
+native-components = ["gpui", "dep:rake-native"]
+native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
+updates = ["native-lifecycle", "rake-core/updates"]
+updates-sparkle = ["updates", "rake-core/updates-sparkle", "rake-updates/sparkle"]
+updates-appimage = ["updates", "rake-core/updates-appimage", "rake-updates/appimage"]
+updates-velopack = ["updates", "rake-core/updates-velopack", "rake-updates/velopack"]
+devtools = ["gpui_pre?/profiler", "gpui_fast?/profiler", "rake-core/devtools", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
+devtools-memory = ["devtools", "rake-core/devtools-memory"]
+kit = ["gpui", "rake-ui/kit"]
+# Deprecated compatibility alias; UI is provided by gpui (enabled by default).
+experimental-view = []
+view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support", "gpui_platform/runtime_shaders", "gpui_fast_platform?/runtime_shaders"]
+gpui = ["dep:anyhow", "dep:image", "dep:gpui_pre_apple", "dep:windows", "dep:oo7", "dep:zbus", "dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+
+locale = ["gpui", "dep:fluent-bundle", "dep:icu_locale_core", "dep:sys-locale"]
+
+locale-icu = ["locale", "dep:fixed_decimal", "dep:icu_calendar", "dep:icu_datetime", "dep:icu_decimal", "dep:icu_plurals", "dep:icu_provider", "dep:icu_provider_blob", "dep:writeable"]
+
+experimental-reactive = ["gpui", "rake-macros/reactive", "dep:slotmap"]
+
+[dependencies]
+slotmap = { version = "1.1", optional = true }
+writeable = { version = "0.6", optional = true }
+icu_provider_blob = { version = "2.4", optional = true }
+icu_provider = { version = "2.4", features = ["sync"], optional = true }
+icu_plurals = { version = "2.4", default-features = false, features = ["serde"], optional = true }
+icu_decimal = { version = "2.4", default-features = false, features = ["serde"], optional = true }
+icu_datetime = { version = "2.4", default-features = false, features = ["serde"], optional = true }
+icu_calendar = { version = "2.4", default-features = false, optional = true }
+fixed_decimal = { version = "0.7", optional = true }
+icu_locale_core = { version = "2.4", optional = true }
+fluent-bundle = { version = "0.16", optional = true }
+rake-core.workspace = true
+rake-shortcuts = { version = "=0.1.0-alpha.7", path = "../rake-shortcuts", optional = true }
+image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
+rake-tray = { version = "=0.1.0-alpha.7", path = "../rake-tray", optional = true }
+rake-updates = { version = "=0.1.0-alpha.7", path = "../rake-updates", optional = true }
+rake-resources = { version = "=0.1.0-alpha.7", path = "../rake-resources" }
+rake-ui = { workspace = true, optional = true }
+rake-native = { workspace = true, optional = true }
+rake-protocol.workspace = true
+rake-macros = { version = "=0.1.0-alpha.7", path = "../rake-macros" }
+rake-diagnostics.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = "1.2.3"
+tracing.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+url = "2.5"
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+event-listener = "5.4"
+web-time.workspace = true
+gpui_pre = { package = "gpui-pre", version = "=0.3.11", default-features = false, optional = true }
+gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
+gpui_fast = { workspace = true, optional = true }
+gpui_fast_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
+
+[target.'cfg(any(unix, windows))'.dependencies]
+rake-client.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"], optional = true }
+zbus = { version = "5", default-features = false, features = ["async-io"], optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+sys-locale = { version = "0.3", optional = true }
+blaze-live = { package = "rake-blaze-live", version = "=0.1.0-alpha.7", path = "../../vendor/blaze-live", optional = true }
+anyhow = { version = "1", optional = true }
+libc = "0.2"
+blocking = "1.7"
+tempfile = "3"
+raw-window-handle = { version = "0.6", optional = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_fast_apple = { package = "gpui-fast-apple", version = "=0.1.13", optional = true }
+gpui_pre_apple = { package = "gpui-pre-apple", version = "=0.3.11", optional = true }
+block2 = { version = "0.6", optional = true }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"], optional = true }
+
+metal = { version = "0.33", optional = true }
+foreign-types = { version = "0.5", optional = true }
+objc2 = { version = "0.6.5", optional = true }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSBundle", "NSError"], optional = true }
+objc2-quartz-core = { version = "0.3.2", features = ["CALayer"], optional = true }
+pathfinder_simd = { version = "0.5.6", features = ["pf-no-simd"], optional = true }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "NSGraphics", "objc2-core-foundation"], optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Graphics_DirectComposition"], optional = true }
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_Com"], optional = true }
+
+[dev-dependencies]
+rake-tray = { version = "=0.1.0-alpha.7", path = "../rake-tray", features = ["test-support"] }
+futures.workspace = true
+tracing-subscriber.workspace = true

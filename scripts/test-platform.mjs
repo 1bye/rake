@@ -3,8 +3,14 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-const source = await readFile(new URL('../crates/rake/src/platform/browser.js', import.meta.url), 'utf8');
-const adapter = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+async function load(module) {
+  const source = await readFile(new URL(`../crates/${module}`, import.meta.url), 'utf8');
+  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+}
+const adapter = {
+  ...await load('rake-core/src/platform/browser.js'),
+  ...await load('rake-gpui/src/platform/browser.js'),
+};
 const values = new Map();
 globalThis.localStorage = {
   getItem: key => values.get(key) ?? null,
@@ -86,8 +92,10 @@ assert.equal(opened.location.href, 'https://example.com');
 console.log('Platform adapter: eager requests, capabilities, denial, cancellation, file limits, quotas and URL opening passed');
 
 // OS notification adapter: permission UI is doubled, delivery/callback code is real.
-const notificationsSource = await readFile(new URL('../crates/rake/src/platform/notifications/browser.js', import.meta.url), 'utf8');
-const notifications = await import(`data:text/javascript;base64,${Buffer.from(notificationsSource).toString('base64')}`);
+const notifications = {
+  ...await load('rake-gpui/src/platform/notifications/browser.js'),
+  ...await load('rake-core/src/platform/notifications/browser.js'),
+};
 let prompts = 0;
 let nextPermission = 'granted';
 const posted = [];

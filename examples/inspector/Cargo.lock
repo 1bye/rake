@@ -4444,22 +4444,112 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rake-app"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.7"
 dependencies = [
- "anyhow",
+ "gpui-pre-platform",
+ "rake-core",
+ "rake-gpui",
+ "rake-macros",
+]
+
+[[package]]
+name = "rake-client"
+version = "0.1.0-alpha.7"
+dependencies = [
+ "async-io",
+ "futures",
+ "libc",
+ "rake-http",
+ "rake-protocol",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "url",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rake-core"
+version = "0.1.0-alpha.7"
+dependencies = [
  "async-io",
  "blocking",
  "console_error_panic_hook",
  "event-listener",
  "futures",
- "gpui-pre",
- "gpui-pre-platform",
  "js-sys",
  "libc",
- "objc2-app-kit 0.3.2",
  "rake-client",
  "rake-diagnostics",
  "rake-http",
+ "rake-macros",
+ "rake-protocol",
+ "rake-resources",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
+name = "rake-diagnostics"
+version = "0.1.0-alpha.7"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "rake-dist-core"
+version = "0.1.0-alpha.7"
+dependencies = [
+ "semver",
+ "serde",
+ "target-lexicon",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
+name = "rake-gpui"
+version = "0.1.0-alpha.7"
+dependencies = [
+ "anyhow",
+ "block2 0.6.2",
+ "blocking",
+ "console_error_panic_hook",
+ "event-listener",
+ "futures",
+ "gpui-pre",
+ "gpui-pre-apple",
+ "gpui-pre-platform",
+ "image",
+ "js-sys",
+ "libc",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-user-notifications",
+ "oo7",
+ "rake-client",
+ "rake-core",
+ "rake-diagnostics",
  "rake-macros",
  "rake-protocol",
  "rake-resources",
@@ -4478,51 +4568,14 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "windows 0.62.2",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rake-client"
-version = "0.1.0-alpha.2"
-dependencies = [
- "async-io",
- "futures",
- "libc",
- "rake-http",
- "rake-protocol",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "url",
-]
-
-[[package]]
-name = "rake-diagnostics"
-version = "0.1.0-alpha.2"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tracing",
- "tracing-subscriber",
- "web-sys",
- "web-time",
-]
-
-[[package]]
-name = "rake-dist-core"
-version = "0.1.0-alpha.2"
-dependencies = [
- "semver",
- "serde",
- "target-lexicon",
- "thiserror 2.0.21",
- "url",
+ "zbus 5.19.0",
 ]
 
 [[package]]
 name = "rake-http"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.7"
 dependencies = [
  "async-compat",
  "async-io",
@@ -4554,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "rake-macros"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.7"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4565,7 +4618,7 @@ dependencies = [
 
 [[package]]
 name = "rake-protocol"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.7"
 dependencies = [
  "percent-encoding",
  "rake-diagnostics",
@@ -4578,7 +4631,7 @@ dependencies = [
 
 [[package]]
 name = "rake-resources"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.7"
 dependencies = [
  "command-group",
  "rake-dist-core",
@@ -4588,17 +4641,18 @@ dependencies = [
 
 [[package]]
 name = "rake-ui"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.7"
 dependencies = [
  "gpui-base",
  "gpui-pre",
+ "rake-macros",
  "tracing",
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "rake-updates"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.7"
 dependencies = [
  "cc",
  "event-listener",
@@ -4613,7 +4667,7 @@ dependencies = [
 
 [[package]]
 name = "rake-view-syntax"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5817,6 +5871,7 @@ dependencies = [
  "powerfmt",
  "serde_core",
  "time-core",
+ "time-macros",
 ]
 
 [[package]]
@@ -5824,6 +5879,16 @@ name = "time-core"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
+
+[[package]]
+name = "time-macros"
+version = "0.2.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
+dependencies = [
+ "num-conv",
+ "time-core",
+]
 
 [[package]]
 name = "tiny-keccak"

@@ -134,7 +134,7 @@ python3 scripts/test-preview.py
 node scripts/test-preview-ui.mjs
 python3 scripts/test-dev-bridge.py
 cargo test -p rake-app-cli --bin rake --offline
-cargo test -p rake-app --no-default-features --features devtools --lib native_preview --offline
+cargo test -p rake-gpui --features devtools --lib native_preview --offline
 cargo test -p rake-app --test inspection_compiled_out --offline
 ```
 

@@ -69,7 +69,7 @@ try {
     const path = new URL(request.url, 'http://localhost').pathname;
     try {
       if (path === '/') { response.writeHead(200, {'Content-Type':'text/html'}).end(bootstrap); return; }
-      if (path === '/adapter.js') { response.writeHead(200, {'Content-Type':'text/javascript'}).end(await readFile(join(root, 'crates/rake/src/crash/browser.js'))); return; }
+      if (path === '/adapter.js') { response.writeHead(200, {'Content-Type':'text/javascript'}).end(await readFile(join(root, 'crates/rake-core/src/crash/browser.js'))); return; }
       assert(!path.split('/').includes('..'));
       const data = await readFile(join(temporary, path));
       response.writeHead(200, {'Content-Type':path.endsWith('.wasm')?'application/wasm':'text/javascript'}).end(data);

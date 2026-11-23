@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {on_canvas_file_drop, read_file} from '../crates/rake/src/platform/browser.js';
+import {on_canvas_file_drop, read_file} from '../crates/rake-gpui/src/platform/browser.js';
 globalThis.document = new EventTarget();
 const canvas = new EventTarget();
 canvas.tagName = 'CANVAS';

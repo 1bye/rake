@@ -110,7 +110,7 @@ Automated checks:
 
 ```sh
 cargo test -p rake-app --no-default-features --lib --test platform
-cargo test -p rake-app --features view-test-support --lib
+cargo test -p rake-gpui --features view-test-support --lib
 node scripts/test-platform.mjs
 ```
 

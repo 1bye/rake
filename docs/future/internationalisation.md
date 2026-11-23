@@ -214,7 +214,7 @@ checks; defer that to its own issue. Reject a global row-reverse workaround.
 ## 7. Inspection and agents
 
 Inspection reads GPUI a11y metadata, preferring explicit labels and deriving
-label names from text ([accessibility.rs:15–45](../../crates/rake/src/inspection/view/accessibility.rs#L15)).
+label names from text ([accessibility.rs:15–45](../../crates/rake-gpui/src/inspection/view/accessibility.rs#L15)).
 CDP emits `name` with label fallback
 ([accessibility.rs:70–71](../../crates/rake-cli/src/cdp/accessibility.rs#L70)).
 Semantic queries deserialize a strict selector with `name`, then compare exact

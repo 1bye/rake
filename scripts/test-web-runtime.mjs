@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-const source = await readFile(new URL('../crates/rake/src/web/browser.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../crates/rake-core/src/web/browser.js', import.meta.url), 'utf8');
 const adapter = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 globalThis.document = {baseURI: 'https://example.test/tools/rake-builds/old/', querySelector: () => ({content: '{"build":"old"}'})};
 globalThis.location = {origin: 'https://example.test'};

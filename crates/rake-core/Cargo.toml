@@ -1,0 +1,65 @@
+[package]
+name = "rake-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
+description = "Framework-free runtime for the Rake application framework"
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+launch-at-login = ["dep:rake-autostart"]
+updates = ["dep:rake-updates", "rake-updates/native-lifecycle"]
+updates-sparkle = ["updates", "rake-updates/sparkle"]
+updates-appimage = ["updates", "rake-updates/appimage"]
+updates-velopack = ["updates", "rake-updates/velopack"]
+devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]
+devtools-memory = ["devtools", "dep:backtrace"]
+
+[dependencies]
+zeroize = "1"
+rake-autostart = { version = "=0.1.0-alpha.7", path = "../rake-autostart", optional = true }
+rake-updates = { version = "=0.1.0-alpha.7", path = "../rake-updates", optional = true }
+rake-resources = { version = "=0.1.0-alpha.7", path = "../rake-resources" }
+rake-http = { workspace = true, features = ["task-errors"] }
+rake-protocol.workspace = true
+rake-macros = { version = "=0.1.0-alpha.7", path = "../rake-macros" }
+rake-diagnostics.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = "1.2.3"
+tracing.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+url = "2.5"
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+event-listener = "5.4"
+web-time.workspace = true
+
+[target.'cfg(any(unix, windows))'.dependencies]
+rake-client.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+backtrace = { version = "0.3.76", optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+libc = "0.2"
+async-io = "2.6"
+blocking = "1.7"
+tempfile = "3"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
