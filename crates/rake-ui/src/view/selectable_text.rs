@@ -1,10 +1,10 @@
 // Copyright 2024 - 2026 Longbridge <https://longbridge.com>
 // SPDX-License-Identifier: Apache-2.0
 // Adapted from longbridge/gpui-kit crates/base (gpui-base 0.9.0).
-// Rake accepts pre-styled runs, can skip selection registration, and tracks
-// copy projection changes through Base's public selection API. See LICENSE-GPUI-BASE.
+// Rake accepts pre-styled runs and makes selection registration optional.
+// The selection engine stays in Base. See LICENSE-GPUI-BASE.
 
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::ops::Range;
 
 use gpui::{
     App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, GlobalElementId, HitboxBehavior,
@@ -17,11 +17,6 @@ pub(super) struct SelectableText {
     text: SharedString,
     styled_text: StyledText,
     selectable: bool,
-}
-
-pub(super) struct Selection {
-    handle: TextSelectionHandle,
-    projected_text: RefCell<Option<String>>,
 }
 
 impl SelectableText {
@@ -97,7 +92,7 @@ impl IntoElement for SelectableText {
 }
 
 impl Element for SelectableText {
-    type RequestLayoutState = Option<Rc<Selection>>;
+    type RequestLayoutState = Option<TextSelectionHandle>;
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
@@ -118,15 +113,11 @@ impl Element for SelectableText {
         let selection = self.selectable.then(|| {
             window.with_element_state(
                 global_id.expect("selectable paragraph must have a stable element id"),
-                |retained: Option<Rc<Selection>>, _| {
-                    let selection = retained.unwrap_or_else(|| {
-                        Rc::new(Selection {
-                            handle: TextSelectionHandle::new(self.text.clone(), cx),
-                            projected_text: RefCell::default(),
-                        })
-                    });
+                |retained: Option<TextSelectionHandle>, _| {
+                    let handle =
+                        retained.unwrap_or_else(|| TextSelectionHandle::new(self.text.clone(), cx));
 
-                    (selection.clone(), selection)
+                    (handle.clone(), handle)
                 },
             )
         });
@@ -149,8 +140,7 @@ impl Element for SelectableText {
         self.styled_text
             .prepaint(global_id, inspector_id, bounds, &mut (), window, cx);
 
-        if let Some(selection) = selection {
-            let handle = &selection.handle;
+        if let Some(handle) = selection {
             let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
             let registration = TextSelectionRegistration::new(hitbox, bounds)
                 .with_text_bounds(vec![bounds])
@@ -170,9 +160,9 @@ impl Element for SelectableText {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(selection) = selection {
+        if let Some(handle) = selection {
             let layout = self.styled_text.layout();
-            let projection = selection.handle.update_runs(
+            let projection = handle.update_runs(
                 &[TextSelectionRun::new(
                     self.text.clone(),
                     layout.clone(),
@@ -180,20 +170,8 @@ impl Element for SelectableText {
                 )],
                 cx,
             );
-            let range = projection.ranges().first().and_then(Option::as_ref);
-            let projected_text = projection
-                .is_active()
-                .then(|| range.map_or("", |range| &self.text[range.clone()]));
-            let mut previous = selection.projected_text.borrow_mut();
-
-            // Refresh Base overlays when the projection changes. Reading the window's
-            // selected text here would also run other participants' copy callbacks.
-            if previous.as_deref() != projected_text {
-                *previous = projected_text.map(str::to_owned);
-                window.refresh();
-            }
-
-            if let Some(range) = range {
+            // Base caches the copy text while projecting the run.
+            if let Some(Some(range)) = projection.ranges().first() {
                 let color = gpui_base::Theme::global(cx).tokens.colors.selection;
 
                 Self::paint_selection(layout, range.clone(), color, window);
