@@ -8,7 +8,7 @@
 - Added live system appearance palettes, external file drops on desktop and Web,
   and native file icons with a bounded cache.
 - Added bounded private application logging and `rake ctl logs` for reading and
-  following logs. Runtime diagnostics redact user content.
+  following logs. Rake redacts user content from its own runtime diagnostics.
 - Added styled selectable paragraphs and accessible inline and standalone links
   with keyboard activation and drag selection. Published Rake uses the stock
   GPUI Base 0.9.0 window selection. Its Root trims leading and trailing

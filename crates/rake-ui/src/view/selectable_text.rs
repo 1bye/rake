@@ -11,6 +11,7 @@ use gpui::{
     Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels, Point, SharedString,
     StyledText, Window, transparent_black,
 };
+
 use gpui_base::{TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
 
 pub(super) struct SelectableText {
@@ -40,6 +41,7 @@ impl SelectableText {
         ) else {
             return;
         };
+
         for bounds in selection_quad_bounds(start, end, layout.bounds(), layout.line_height()) {
             window.paint_quad(PaintQuad {
                 bounds,
@@ -70,16 +72,19 @@ fn selection_quad_bounds(
         start,
         Point::new(bounds.right(), start.y + line_height),
     )];
+
     if end.y > start.y + line_height {
         quads.push(Bounds::from_corners(
             Point::new(bounds.left(), start.y + line_height),
             Point::new(bounds.right(), end.y),
         ));
     }
+
     quads.push(Bounds::from_corners(
         Point::new(bounds.left(), end.y),
         Point::new(end.x, end.y + line_height),
     ));
+
     quads
 }
 
@@ -121,6 +126,7 @@ impl Element for SelectableText {
                 },
             )
         });
+
         let (layout_id, ()) = self
             .styled_text
             .request_layout(global_id, inspector_id, window, cx);
@@ -170,6 +176,7 @@ impl Element for SelectableText {
                 )],
                 cx,
             );
+
             // Base caches the copy text while projecting the run.
             if let Some(Some(range)) = projection.ranges().first() {
                 let color = gpui_base::Theme::global(cx).tokens.colors.selection;
@@ -196,6 +203,7 @@ mod tests {
         Context, InteractiveElement as _, IntoElement, Modifiers, MouseButton, ParentElement as _,
         Render, SharedString, Styled as _, StyledText, TestAppContext, Window, div, point, px,
     };
+
     use gpui_base::{TextSelection, TextSelectionLayer};
 
     use super::SelectableText;
@@ -227,6 +235,7 @@ mod tests {
     #[test]
     fn rake_and_base_share_window_selection() {
         let mut cx = TestAppContext::single();
+
         let (_, cx) = cx.add_window_view(|_, cx| {
             crate::init(cx);
 
