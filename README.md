@@ -17,13 +17,22 @@ AI agents inspect and control the running app.
   support, and save/discard/cancel guards.
 - **Managed async work.** Route loaders, retries, and tasks owned by tabs or the app.
 - **Shared services.** HTTP, storage, diagnostics, files, clipboard and preferences
-  behind one `rake` dependency.
+  behind one `rake` dependency, plus bounded private [logging](docs/logging.md).
+- **Platform services.** [Notifications](docs/notifications.md), global shortcuts,
+  keychain secrets, file drops and system appearance through
+  [platform services](docs/platform-services.md), plus [tray icons](docs/tray.md),
+  [launch at login](docs/launch-at-login.md) and
+  [single-instance](docs/single-instance.md) activation.
 - **Agent tooling.** Commands with JSON schemas, JSON CLI output, element inspection and
   Chrome DevTools.
 - **Development and shipping.** Watched builds, checkpointed reloads, packaging,
   signing and update controllers.
-- **UI options.** The `view!` syntax on [GPUI Base](docs/gpui-kit.md), optional
-  GPUI Kit components (native only), and [AppKit controls](crates/rake-native/README.md).
+- **UI options.** The `view!` syntax on [GPUI Base](docs/gpui-kit.md), with selectable
+  text and inline links, optional GPUI Kit components (native only), and
+  [AppKit controls](crates/rake-native/README.md).
+- **Experimental.** Signal-based [function components](docs/experimental-view.md) and
+  a [locale prototype](docs/future/internationalisation-prototype.md) with Fluent
+  messages and ICU formatting.
 
 ## Quick start
 
@@ -40,8 +49,9 @@ rake dev
 The generated app has two pages, a persistent layout, a theme and an agent-callable
 command. For the browser, use `rake dev --target web` with a WebGPU-capable browser
 and the matching `wasm-bindgen-cli` (the builder prints the install command).
-The first dev run creates `Cargo.lock`; commit it. `rake new` pins Rake to the
-version of the installed CLI.
+The first dev run creates `Cargo.lock`; commit it. `rake new` pins the SDK
+release the CLI was tested with: CLI alpha.7 generates SDK alpha.6 apps. For the
+latest SDK, change the generated `rake-app` requirement to `=0.1.0-alpha.7`.
 
 UI uses `view!` (it's comptime). A complete Hello window looks like this:
 
@@ -304,8 +314,10 @@ From a clone of this repository:
 | `cargo run -p rake-foundation` | App setup, HTTP and diagnostics |
 | `cargo run -p rake-routing` | Tabs, histories, guards and managed work |
 | `cargo run -p rake-view` | The `view!` syntax |
+| `cargo run -p rake-view --features i18n-icu` | Locale prototype: English and Portuguese messages, plurals, numbers and dates |
 | `cargo run -p rake-desktop-example` | Pages, layouts, loading and native updates |
 | `cargo run -p rake-files` | Files, clipboard and preferences |
+| `cargo run -p rake-tray-example` | Native [tray icons](docs/tray.md) with typed commands and rich popups |
 | `cargo run -p rake-kit-example --features kit,devtools` | GPUI Kit in routed tabs (native) |
 | `cargo run -p rake-app --example native --features native-components` | AppKit controls (macOS) |
 
@@ -321,7 +333,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Licensed under either the [MIT License](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
-
-
-[Tray icons](docs/tray.md): multiple application-owned native items, typed commands,
-platform appearance extensions and rich popups. Run `cargo run -p rake-tray-example`.
