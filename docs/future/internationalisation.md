@@ -238,6 +238,8 @@ same language as the visible interface.
 
 ## Prototype after disk recovery
 
+See the [prototype results](internationalisation-prototype.md) for measurements and implementation notes.
+
 Extend `examples/view`, keeping its normal build as baseline; add an optional Kit
 control on native using the pattern in `examples/kit`. Use English and Portuguese
 catalogues, a count select, decimal and date, a language picker and two windows.

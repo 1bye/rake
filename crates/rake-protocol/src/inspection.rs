@@ -351,6 +351,9 @@ pub struct Snapshot {
     pub capture: String,
     /// Router revision at the start of the captured render, not a live revision.
     pub router_revision: u64,
+    /// Resolved application locale when the tree was captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
     /// Captured boundaries in depth-first order.
     pub elements: Vec<Element>,
     /// Inspected boundaries omitted by count/byte limits. Opaque descendants are uncounted.
@@ -510,6 +513,13 @@ pub struct Accessibility {
     /// `label`, `text`, or `contents`; absent on older runtimes or unknown names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_source: Option<String>,
+    /// Fluent message identifier for this label or control.
+    #[serde(
+        default,
+        rename = "messageKey",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub message_key: Option<String>,
     /// Actual AccessKit states; never editable text or password values.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub states: serde_json::Map<String, Value>,
@@ -543,6 +553,7 @@ impl Accessibility {
             && self.label == other.label
             && self.name == other.name
             && self.name_source == other.name_source
+            && self.message_key == other.message_key
             && self.states == other.states
             && self.description == other.description
             && self.disabled == other.disabled

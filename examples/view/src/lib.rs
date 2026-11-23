@@ -14,6 +14,8 @@ use rake::overlay::{
 mod components;
 mod documents;
 mod inputs;
+#[cfg(feature = "i18n")]
+mod locale_demo;
 
 #[derive(Clone, rake::Theme)]
 struct Colors {
@@ -608,29 +610,35 @@ impl Render for Counter {
 pub fn application() -> App {
     App::new("com.example.rake.view")
         .control(rake::control::ControlConfig::FromEnvironment)
-        .root(|_, window, cx| {
-            let increment = if cx.platform_info().os == gpui::OperatingSystem::Mac {
-                "cmd-i"
-            } else {
-                "ctrl-i"
-            };
+        .root(|_, window, cx| mount_counter(window, cx))
+}
 
-            cx.bind_keys([
-                KeyBinding::new(increment, Increment, Some("Counter")),
-                KeyBinding::new("escape", Reset, Some("Counter")),
-                KeyBinding::new("h", ToggleHistory, Some("Counter")),
-                KeyBinding::new("r", ReverseHistory, Some("Counter")),
-                KeyBinding::new("l", ToggleLocked, Some("Counter")),
-                KeyBinding::new("t", ToggleTheme, Some("Counter")),
-                KeyBinding::new("b", BumpRow, Some("HistoryItem")),
-            ]);
+fn mount_counter(window: &mut Window, cx: &mut gpui::App) -> gpui::AnyView {
+    let increment = if cx.platform_info().os == gpui::OperatingSystem::Mac {
+        "cmd-i"
+    } else {
+        "ctrl-i"
+    };
 
-            cx.new(|cx| Counter::new(window, cx)).into()
-        })
+    cx.bind_keys([
+        KeyBinding::new(increment, Increment, Some("Counter")),
+        KeyBinding::new("escape", Reset, Some("Counter")),
+        KeyBinding::new("h", ToggleHistory, Some("Counter")),
+        KeyBinding::new("r", ReverseHistory, Some("Counter")),
+        KeyBinding::new("l", ToggleLocked, Some("Counter")),
+        KeyBinding::new("t", ToggleTheme, Some("Counter")),
+        KeyBinding::new("b", BumpRow, Some("HistoryItem")),
+    ]);
+
+    cx.new(|cx| Counter::new(window, cx)).into()
 }
 
 #[rake::app]
-fn app() -> App {
+fn app() -> impl rake::__private::AppFactoryOutput {
+    #[cfg(feature = "i18n")]
+    return locale_demo::application();
+
+    #[cfg(not(feature = "i18n"))]
     application()
 }
 

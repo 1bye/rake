@@ -90,6 +90,7 @@ impl Default for Store {
                 status: Status::Unavailable,
                 capture: "0".into(),
                 router_revision: 0,
+                locale: None,
                 elements: Vec::new(),
                 omitted: 0,
                 coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Rendered text is captured at text boundaries (16 KiB UTF-8 prefix); editable control values are excluded. Bounded accessibility labels and descriptions include macro-generated control names.".into(),
@@ -210,6 +211,7 @@ impl Store {
             status: full.status,
             capture: full.capture.clone(),
             router_revision: full.router_revision,
+            locale: full.locale.clone(),
             elements: Vec::new(),
             omitted: full.omitted + full.elements.len().saturating_sub(TREE_PAGE_SIZE),
             coverage: full.coverage.clone(),
@@ -534,6 +536,7 @@ impl Store {
             capture: state.next_capture.to_string(),
             status: Status::Captured,
             router_revision: revision,
+            locale: None,
             elements: Vec::new(),
             omitted: 0,
             coverage: state.latest.coverage.clone(),
@@ -558,7 +561,8 @@ impl Store {
             // Style-only redraws keep stable identities without copying style payloads.
             let old = &host.snapshot;
 
-            let same_boundaries = snapshot.elements.len() == old.elements.len()
+            let same_boundaries = snapshot.locale == old.locale
+                && snapshot.elements.len() == old.elements.len()
                 && snapshot.omitted == old.omitted
                 && snapshot.elements.iter().zip(&old.elements).enumerate().all(
                     |(index, (element, old))| {
@@ -896,6 +900,7 @@ fn index_page(full: &Captured, offset: usize) -> Result<TreePage, InspectionErro
         status: full.status,
         capture: full.capture.clone(),
         router_revision: full.router_revision,
+        locale: full.locale.clone(),
         omitted: full.omitted,
         coverage: full.coverage.clone(),
     };

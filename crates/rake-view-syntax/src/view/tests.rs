@@ -824,6 +824,30 @@ fn file_drag_over_classes_merge_with_the_external_paths_payload() {
 }
 
 #[test]
+fn preserves_explicit_translation_and_lowers_message_key() {
+    let output = expand(
+        r#"<button aria-label={label.clone()} message-key="inbox-count">
+            {rake::t!(cx, "inbox-count", count = n)}
+        </button>"#,
+    )
+    .unwrap();
+
+    let tokens = output.to_string();
+
+    syn::parse2::<syn::Expr>(output).unwrap();
+    assert!(
+        tokens.contains(r#"rake :: t ! (cx , "inbox-count" , count = n)"#),
+        "{tokens}"
+    );
+    assert!(
+        tokens.contains(r#". message_key ("inbox-count")"#),
+        "{tokens}"
+    );
+    assert!(expand(r#"<button message-key="inbox.count"/>"#).is_err());
+    assert!(expand(r#"<button message-key={dynamic_key}/>"#).is_err());
+}
+
+#[test]
 fn links_and_selectable_text_expand() {
     for source in [
         r#"<p select-text>Before <strong>bold</strong> <a id="route-link" href="/notes/1" aria-label="A route">a route</a></p>"#,

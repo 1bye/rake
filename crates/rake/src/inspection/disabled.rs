@@ -51,6 +51,7 @@ impl Store {
             status: Status::Unavailable,
             capture: "0".into(),
             router_revision: 0,
+            locale: None,
             elements: Vec::new(),
             omitted: 0,
             coverage: "Inspection was compiled out; enable rake/devtools".into(),

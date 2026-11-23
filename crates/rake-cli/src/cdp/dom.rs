@@ -1479,6 +1479,7 @@ mod tests {
                 label: Some("Save".into()),
                 name: None,
                 name_source: None,
+                message_key: Some("save".into()),
                 states: Default::default(),
                 description: None,
                 disabled: false,
@@ -1512,6 +1513,7 @@ mod tests {
 
         assert_eq!(node["role"]["value"], "button");
         assert_eq!(node["name"]["value"], "Save");
+        assert_eq!(node["messageKey"], "save");
         assert_eq!(node["ignored"], false);
         let root = dom
             .accessibility("Accessibility.getRootAXNode", &json!({}))

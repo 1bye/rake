@@ -1458,6 +1458,34 @@ impl Element {
         for (position, attribute) in self.attributes.iter().enumerate() {
             let value = attribute.expression()?;
 
+            if attribute.name == "message-key" {
+                let valid = if let Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(key),
+                    ..
+                }) = value
+                {
+                    let key = key.value();
+                    let mut bytes = key.bytes();
+
+                    bytes
+                        .next()
+                        .is_some_and(|first| first.is_ascii_alphabetic())
+                        && bytes
+                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+                } else {
+                    false
+                };
+
+                if !valid {
+                    return Err(syn::Error::new(
+                        attribute.span,
+                        "message-key expects a literal Fluent message identifier",
+                    ));
+                }
+
+                continue;
+            }
+
             if self.resolved == Tag::Svg
                 && !matches!(
                     attribute.name.as_str(),

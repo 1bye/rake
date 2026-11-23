@@ -68,6 +68,8 @@ pub mod reactive;
 pub use rake_macros::component;
 
 pub mod crash;
+#[cfg(feature = "locale")]
+pub mod locale;
 pub mod logging;
 
 #[cfg(all(feature = "devtools-memory", unix))]

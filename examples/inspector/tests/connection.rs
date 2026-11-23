@@ -185,6 +185,7 @@ fn exact_runtime_query_roundtrips_the_shared_protocol() {
                 status: rake::inspection::Status::Captured,
                 capture: "capture-1".into(),
                 router_revision: 3,
+                locale: None,
                 elements: vec![],
                 omitted: 0,
                 coverage: "boundaries".into(),
