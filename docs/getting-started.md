@@ -46,7 +46,7 @@ rake new my-app --rake-path /absolute/path/to/rake/crates/rake --git
 
 The path is stored absolutely, so moving the generated app doesn't silently
 change its dependency. Its README explains where to change the application ID.
-For an existing crate, run `cargo add rake-app@0.1.0-alpha.6 --rename rake` and follow the [README Hello example](../README.md#quick-start).
+For an existing crate, run `cargo add rake-app@0.1.0-alpha.7 --rename rake` and follow the [README Hello example](../README.md#quick-start).
 Use the helper versions supported by that SDK when upgrading an existing app;
 CLI, SDK and supporting-crate version numbers can differ.
 
