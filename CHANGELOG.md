@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.7 — 2026-11-23
+
+- Aligned every published Rake crate on one workspace version,
+  `0.1.0-alpha.7`, with exact `=0.1.0-alpha.7` pins between them. Future
+  releases bump `[workspace.package].version` once.
+- No API or behaviour changes since SDK alpha.6; this release republishes the
+  SDK and every supporting crate, including the previously unchanged alpha.4
+  crates and `rake-blaze-live`, at alpha.7.
+- `rake-app-cli 0.1.0-alpha.7` was already published with SDK alpha.6 and is
+  not republished; it still scaffolds SDK alpha.6. The next CLI release will
+  scaffold the aligned SDK. To use alpha.7 in an existing crate, run
+  `cargo add rake-app@0.1.0-alpha.7 --rename rake`.
+
 ## SDK 0.1.0-alpha.6 and CLI 0.1.0-alpha.7 — 2026-11-23
 
 - Added the app-scoped native keychain secrets API, owned global shortcut

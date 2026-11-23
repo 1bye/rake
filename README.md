@@ -68,7 +68,7 @@ fn app() -> App {
 }
 ```
 
-To add Rake to an existing crate, use `cargo add rake-app@0.1.0-alpha.6 --rename rake`
+To add Rake to an existing crate, use `cargo add rake-app@0.1.0-alpha.7 --rename rake`
 and then use the Hello entry above. `view!`, themes and style
 presets are included by default; Kit and DevTools remain optional.
 

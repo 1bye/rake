@@ -1,6 +1,6 @@
 [package]
 name = "rake-app"
-version = "0.1.0-alpha.6"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -52,17 +52,17 @@ icu_provider = { version = "2.4", features = ["sync"], optional = true }
 icu_provider_blob = { version = "2.4", optional = true }
 writeable = { version = "0.6", optional = true }
 zeroize = "1"
-rake-shortcuts = { version = "=0.1.0-alpha.5", path = "../rake-shortcuts", optional = true }
+rake-shortcuts = { version = "=0.1.0-alpha.7", path = "../rake-shortcuts", optional = true }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
-rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", optional = true }
-rake-updates = { version = "=0.1.0-alpha.4", path = "../rake-updates", optional = true }
-rake-resources = { version = "=0.1.0-alpha.4", path = "../rake-resources" }
+rake-autostart = { version = "=0.1.0-alpha.7", path = "../rake-autostart", optional = true }
+rake-tray = { version = "=0.1.0-alpha.7", path = "../rake-tray", optional = true }
+rake-updates = { version = "=0.1.0-alpha.7", path = "../rake-updates", optional = true }
+rake-resources = { version = "=0.1.0-alpha.7", path = "../rake-resources" }
 rake-ui = { workspace = true, optional = true }
 rake-native = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }
 rake-protocol.workspace = true
-rake-macros = { version = "=0.1.0-alpha.5", path = "../rake-macros" }
+rake-macros = { version = "=0.1.0-alpha.7", path = "../rake-macros" }
 rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -91,7 +91,7 @@ zbus = { version = "5", default-features = false, features = ["async-io"], optio
 backtrace = { version = "0.3.76", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-blaze-live = { package = "rake-blaze-live", version = "=0.1.0-alpha.4", path = "../../vendor/blaze-live", optional = true }
+blaze-live = { package = "rake-blaze-live", version = "=0.1.0-alpha.7", path = "../../vendor/blaze-live", optional = true }
 sys-locale = { version = "0.3", optional = true }
 anyhow = "1"
 libc = "0.2"
@@ -126,7 +126,7 @@ windows = { version = "0.62", features = ["Win32_Graphics_DirectComposition"], o
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_Com"], optional = true }
 
 [dev-dependencies]
-rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", features = ["test-support"] }
+rake-tray = { version = "=0.1.0-alpha.7", path = "../rake-tray", features = ["test-support"] }
 futures.workspace = true
 tracing-subscriber.workspace = true
 trybuild = "1"
