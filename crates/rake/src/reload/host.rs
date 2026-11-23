@@ -139,6 +139,77 @@ pub(crate) fn store(checkpoint: &WorkspaceCheckpoint) -> Result<(), String> {
         .map_err(|error| format!("{error:?}"))
 }
 
+#[cfg(feature = "gpui")]
+pub(crate) async fn restore<R: crate::router::Route>(
+    router: &crate::router::Router<R>,
+    checkpoint: Option<Result<WorkspaceCheckpoint, String>>,
+    application_id: &str,
+) {
+    let Some(checkpoint) = checkpoint else { return };
+
+    match checkpoint {
+        Ok(checkpoint) => match router.restore_workspace(&checkpoint, application_id).await {
+            Ok(()) => clear(),
+            Err(error) => router.reload_failed(error.to_string()),
+        },
+        Err(error) => router.reload_failed(error),
+    }
+}
+
+#[cfg(feature = "gpui")]
+pub(crate) use ui::ReloadUi;
+
+#[cfg(feature = "gpui")]
+mod ui {
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
+    use std::rc::Rc;
+
+    use crate::router::{Navigator, Route, WindowId};
+    use crate::tasks::HostVisibility;
+
+    #[derive(Default)]
+    pub(crate) struct ReloadUi {
+        pending: RefCell<Rc<RefCell<BTreeSet<WindowId>>>>,
+    }
+
+    impl ReloadUi {
+        pub(crate) fn begin(&self, windows: Vec<WindowId>) {
+            // Frames queued for a previous request can only acknowledge that request.
+            self.pending
+                .replace(Rc::new(RefCell::new(windows.into_iter().collect())));
+        }
+
+        pub(crate) fn ready(
+            &self,
+            visibility: &dyn Fn(WindowId) -> Option<HostVisibility>,
+        ) -> bool {
+            self.pending
+                .borrow()
+                .borrow()
+                .iter()
+                .all(|&id| matches!(visibility(id), None | Some(HostVisibility::Hidden)))
+        }
+
+        pub(crate) fn observe_frame<R: Route>(
+            &self,
+            id: WindowId,
+            window: &mut gpui::Window,
+            navigator: Navigator<R>,
+        ) {
+            let pending = self.pending.borrow().clone();
+
+            window.on_next_frame(move |_, _| {
+                if pending.borrow_mut().remove(&id)
+                    && let Some(router) = navigator.upgrade_router()
+                {
+                    router.reload_readiness_changed();
+                }
+            });
+        }
+    }
+}
+
 /// Transient live status shares the existing managed/routed reload presentation.
 #[cfg(feature = "gpui")]
 pub(crate) fn status_notice(cx: &gpui::App) -> Option<gpui::AnyElement> {

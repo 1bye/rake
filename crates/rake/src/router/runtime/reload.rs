@@ -1,4 +1,4 @@
-//! Owned development state and the quiescent reload boundary.
+//! Owned development state and workspace checkpoint transactions.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
@@ -79,18 +79,13 @@ impl<R: Route> Router<R> {
     pub fn reload_status(&self) -> ReloadStatus {
         let mut status = self.0.reload.borrow().clone();
 
-        let ready = {
-            let state = self.0.state.borrow();
-
-            self.0.reload_ui_ready.borrow().iter().all(|id| {
-                state
-                    .windows
-                    .get(id)
-                    .is_none_or(|window| window.visibility == HostVisibility::Hidden)
+        if status.phase == ReloadPhase::Quiescing
+            && self.0.tasks.quiescent()
+            && self.0.host_binding.get().is_none_or(|host| {
+                let state = self.0.state.borrow();
+                host.reload_ready(&|id| state.windows.get(&id).map(|window| window.visibility))
             })
-        };
-
-        if status.phase == ReloadPhase::Quiescing && self.0.tasks.quiescent() && ready {
+        {
             status.phase = ReloadPhase::Ready;
         }
 
@@ -131,22 +126,26 @@ impl<R: Route> Router<R> {
             request: Some(request),
             error: None,
         };
-        *self.0.reload_ui_ready.borrow_mut() = if self.0.has_window.get() {
-            self.0.state.borrow().windows.keys().copied().collect()
-        } else {
-            BTreeSet::new()
-        };
         self.0.tasks.pause();
+
+        if let Some(host) = self.0.host_binding.get() {
+            let windows = if self.0.has_window.get() {
+                self.0.state.borrow().windows.keys().copied().collect()
+            } else {
+                Vec::new()
+            };
+
+            host.begin_reload(windows);
+        }
+
         self.0.notify();
 
         Ok(self.reload_status())
     }
 
     #[cfg(feature = "gpui")]
-    pub(crate) fn acknowledge_reload_ui(&self, window: super::WindowId) {
-        if self.0.reload_ui_ready.borrow_mut().remove(&window) {
-            self.0.notify();
-        }
+    pub(crate) fn reload_readiness_changed(&self) {
+        self.0.notify();
     }
 
     /// Captures a prepared workspace on the UI thread. Application providers can fail;
@@ -409,7 +408,8 @@ impl<R: Route> Router<R> {
         if windows
             .iter()
             .any(|window| window.id.0 == 0 || !window_ids.insert(window.id))
-            || (windows.len() != 1 && self.0.window_host.borrow().is_none())
+            || (!matches!(windows.as_slice(), [window] if window.id == self.0.initial_window.get())
+                && !self.0.supports_new_windows())
         {
             return Err(ReloadError::Incompatible(
                 "invalid or unsupported window identities".into(),
@@ -680,23 +680,10 @@ impl<R: Route> Router<R> {
         }
 
         drop(state);
-        let host = self.0.window_host.borrow().clone();
 
         for window in retired {
-            if let Some(host) = &host {
-                host.close(window);
-            }
-
+            self.0.remove_window_host(window);
             self.0.tasks.forget_window(window);
-
-            #[cfg(feature = "gpui")]
-            {
-                self.0.host.borrow_mut().remove(&window);
-
-                if let Some(contexts) = self.0.view_contexts.borrow().as_ref() {
-                    contexts.borrow_mut().remove(&window);
-                }
-            }
         }
 
         for window in window_ids {

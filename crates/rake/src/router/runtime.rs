@@ -41,6 +41,8 @@ mod reload;
 mod updates;
 mod windows;
 
+pub(crate) use windows::HostBinding;
+
 #[cfg(test)]
 mod tests;
 
@@ -53,16 +55,6 @@ pub(crate) type QuitGuard =
 
 #[cfg(test)]
 pub(crate) type Resource = Rc<dyn Any>;
-
-#[cfg(feature = "gpui")]
-type WindowContexts = Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>;
-
-#[cfg(feature = "gpui")]
-#[derive(Clone, Copy)]
-enum HostClosePolicy {
-    Guarded,
-    Detach,
-}
 
 #[cfg(test)]
 pub(crate) type Mount<R> = Rc<
@@ -344,14 +336,10 @@ struct Core<R: Route> {
     #[cfg(all(feature = "updates", feature = "gpui", not(target_family = "wasm")))]
     update_revision: Cell<u64>,
     reload: RefCell<crate::reload::ReloadStatus>,
-    reload_ui_ready: RefCell<BTreeSet<WindowId>>,
     #[cfg(target_family = "wasm")]
     page_reload: Cell<bool>,
     control: Rc<crate::control::ClientState>,
-    #[cfg(feature = "gpui")]
-    host: RefCell<BTreeMap<WindowId, crate::tasks::host::HostObserver>>,
-    #[cfg(feature = "gpui")]
-    view_contexts: RefCell<Option<WindowContexts>>,
+    host_binding: std::cell::OnceCell<Box<dyn HostBinding>>,
     state: RefCell<State<R>>,
     runtime: RuntimeId,
     initial_window: Cell<WindowId>,
@@ -896,14 +884,10 @@ impl<R: Route> Router<R> {
                 request: None,
                 error: None,
             }),
-            reload_ui_ready: RefCell::new(BTreeSet::new()),
             #[cfg(target_family = "wasm")]
             page_reload: Cell::new(false),
             control: Rc::new(crate::control::ClientState::new(config.control_requests)),
-            #[cfg(feature = "gpui")]
-            host: RefCell::new(BTreeMap::new()),
-            #[cfg(feature = "gpui")]
-            view_contexts: RefCell::new(None),
+            host_binding: std::cell::OnceCell::new(),
             state: RefCell::new(State {
                 windows: BTreeMap::from([(WindowId(1), WindowState::default())]),
                 tabs: Vec::new(),
@@ -1452,8 +1436,9 @@ impl<R: Route> Router<R> {
     pub fn shutdown(&self) {
         self.0.shutdown.set(true);
         self.0.tasks.shutdown();
-        #[cfg(feature = "gpui")]
-        self.0.host.borrow_mut().clear();
+        if let Some(host) = self.0.host_binding.get() {
+            host.shutdown();
+        }
 
         let entries: Vec<_> = {
             let state = self.0.state.borrow();
@@ -1566,155 +1551,6 @@ impl<R: Route> Router<R> {
     /// Unknown assumes visible while exposing that visibility is unmeasured.
     pub fn set_host_visibility(&self, visibility: HostVisibility) {
         let _ = self.set_window_visibility(self.0.initial_window.get(), visibility);
-    }
-
-    #[cfg(feature = "gpui")]
-    pub(crate) fn observe_host(&self, window: &gpui::Window, cx: &gpui::App) {
-        self.observe_host_in_with_policy(
-            self.0.initial_window.get(),
-            window,
-            cx,
-            HostClosePolicy::Guarded,
-        );
-    }
-
-    /// Observes a standalone root while allowing its native window to close
-    /// without requesting application quit. The runtime remains available for
-    /// tray/background work until its owning host explicitly shuts it down.
-    #[cfg(feature = "gpui")]
-    pub(crate) fn observe_root_host(&self, window: &gpui::Window, cx: &gpui::App) {
-        self.observe_host_in_with_policy(
-            self.0.initial_window.get(),
-            window,
-            cx,
-            HostClosePolicy::Detach,
-        );
-    }
-
-    #[cfg(feature = "gpui")]
-    pub(crate) fn observe_host_in(&self, id: WindowId, window: &gpui::Window, cx: &gpui::App) {
-        self.observe_host_in_with_policy(id, window, cx, HostClosePolicy::Guarded);
-    }
-
-    #[cfg(feature = "gpui")]
-    fn observe_host_in_with_policy(
-        &self,
-        id: WindowId,
-        window: &gpui::Window,
-        cx: &gpui::App,
-        close_policy: HostClosePolicy,
-    ) {
-        #[cfg(target_family = "wasm")]
-        let _ = close_policy;
-
-        self.0.has_window.set(true);
-        let core = Rc::downgrade(&self.0);
-        let shutdown = core.clone();
-        let unload = core.clone();
-
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let closing = core.clone();
-
-            window.on_window_should_close(cx, move |window, cx| {
-                crate::window_state::native::capture(window, cx);
-
-                let Some(core) = closing.upgrade() else {
-                    return true;
-                };
-
-                if matches!(close_policy, HostClosePolicy::Detach) {
-                    Router(core).detach_host(id);
-
-                    return true;
-                }
-
-                if core.quit.borrow().phase == crate::quit::QuitPhase::Ready {
-                    return true;
-                }
-
-                if core.window_host.borrow().is_none() {
-                    drop(Router(core).quit(crate::quit::QuitOptions::default()));
-
-                    return false;
-                }
-
-                let opening = core
-                    .state
-                    .borrow()
-                    .windows
-                    .get(&id)
-                    .and_then(|window| window.opening);
-
-                if let Some(operation) = opening {
-                    let _ = Router(core).cancel(operation);
-                } else if !core.state.borrow().windows.contains_key(&id) {
-                    return true;
-                } else {
-                    drop(Router(core).close_window(id));
-                }
-
-                false
-            });
-        }
-
-        let observer = crate::tasks::host::HostObserver::attach(
-            move |visibility| {
-                if let Some(core) = core.upgrade() {
-                    let _ = Router(core).set_window_visibility(id, visibility);
-                }
-            },
-            move || {
-                if let Some(core) = shutdown.upgrade() {
-                    Router(core).shutdown();
-                }
-            },
-            move || {
-                let Some(core) = unload.upgrade() else {
-                    return false;
-                };
-
-                #[cfg(target_family = "wasm")]
-                if core.page_reload.replace(false) {
-                    return false;
-                }
-
-                let router = Router(core);
-                let snapshot = router.snapshot();
-
-                snapshot.quit.phase != crate::quit::QuitPhase::Ready
-                    && (snapshot.quit.phase.is_pending()
-                        || snapshot
-                            .tabs
-                            .iter()
-                            .flat_map(|tab| &tab.entries)
-                            .any(|entry| entry.dirty)
-                        || !snapshot.quit.pending_tasks.is_empty()
-                        || !snapshot.quit.pending_operations.is_empty()
-                        || !router.0.quit_guards.borrow().is_empty())
-            },
-            window,
-            cx,
-        );
-
-        self.0.host.borrow_mut().insert(id, observer);
-    }
-
-    #[cfg(feature = "gpui")]
-    pub(crate) fn detach_host(&self, id: WindowId) {
-        let _ = self.set_window_visibility(id, HostVisibility::Hidden);
-
-        let empty = {
-            let mut hosts = self.0.host.borrow_mut();
-
-            hosts.remove(&id);
-
-            hosts.is_empty()
-        };
-
-        if empty {
-            self.0.has_window.set(false);
-        }
     }
 
     #[cfg(feature = "gpui")]
@@ -1844,7 +1680,7 @@ impl<R: Route> Navigator<R> {
                 return Err(OperationError::InvalidOptions);
             }
 
-            if options.target == OpenTarget::NewWindow && core.window_host.borrow().is_none() {
+            if options.target == OpenTarget::NewWindow && !core.supports_new_windows() {
                 return Err(OperationError::UnsupportedCapability(options.target));
             }
 

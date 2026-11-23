@@ -289,12 +289,9 @@ impl Render for ManagedRoot {
         }
 
         if snapshot.reload.request.is_some() {
-            let router = self.router.clone();
-
             if snapshot.reload.phase == crate::reload::ReloadPhase::Quiescing {
-                window.on_next_frame(move |_, _| {
-                    router.acknowledge_reload_ui(crate::router::WindowId(1))
-                });
+                self.router
+                    .observe_reload_frame(crate::router::WindowId(1), window);
                 cx.notify();
             }
 

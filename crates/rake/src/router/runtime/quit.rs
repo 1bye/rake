@@ -492,10 +492,9 @@ async fn run_quit_guards<R: Route>(
     Ok(())
 }
 
-#[cfg(feature = "gpui")]
+#[cfg(all(feature = "native-lifecycle", feature = "gpui", target_os = "macos"))]
 impl<R: Route> Router<R> {
-    pub(crate) fn install_quit_action(&self, cx: &mut gpui::App) {
-        #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
+    pub(crate) fn install_native_quit(&self) {
         if self.0.native_quit.borrow().is_none() {
             match rake_updates::NativeQuitBridge::new() {
                 Ok(bridge) => *self.0.native_quit.borrow_mut() = Some(Rc::new(bridge)),
@@ -505,19 +504,8 @@ impl<R: Route> Router<R> {
                 ),
             }
         }
-
-        let core = Rc::downgrade(&self.0);
-
-        cx.on_action(move |_: &crate::quit::RequestQuit, _| {
-            if let Some(core) = core.upgrade() {
-                drop(Router(core).quit(QuitOptions::default()));
-            }
-        });
     }
-}
 
-#[cfg(all(feature = "native-lifecycle", feature = "gpui", target_os = "macos"))]
-impl<R: Route> Router<R> {
     pub(crate) fn native_quit_changed(&self) -> futures::future::LocalBoxFuture<'static, ()> {
         let changed = self
             .0

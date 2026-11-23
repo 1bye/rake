@@ -1,5 +1,7 @@
 //! GPUI mounting and presentation; retained entries own independent view entities.
 
+mod host;
+
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
 #[path = "view/layout_tests.rs"]
 mod layout_tests;
@@ -271,7 +273,7 @@ impl<R: Route> Router<R> {
         services: Services,
         views: Rc<dyn RouteViews<R>>,
         initial_window: WindowId,
-        contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
+        contexts: host::WindowContexts,
         window: &Window,
         cx: &gpui::App,
     ) -> Self {
@@ -288,7 +290,8 @@ impl<R: Route> Router<R> {
         };
         let router = Router::with_route_mount_and_collector(config, registry, collector, adapter);
 
-        router.bind_initial_window(initial_window, contexts);
+        router.set_initial_window(initial_window);
+        router.bind_view_contexts(contexts);
         router.observe_host(window, cx);
 
         router
@@ -297,7 +300,7 @@ impl<R: Route> Router<R> {
 
 struct GpuiRouteMount<R: Route> {
     views: Rc<dyn RouteViews<R>>,
-    contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
+    contexts: host::WindowContexts,
     services: Services,
     background: gpui::BackgroundExecutor,
 }
@@ -796,17 +799,7 @@ impl<R: Route> Workspace<R> {
 
                 let drive = async move |_view: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                     let execute = async {
-                        if let Some(checkpoint) = checkpoint {
-                            match checkpoint {
-                                Ok(checkpoint) => {
-                                    match driven.restore_workspace(&checkpoint, &restore_id).await {
-                                        Ok(()) => crate::reload::host::clear(),
-                                        Err(error) => driven.reload_failed(error.to_string()),
-                                    }
-                                }
-                                Err(error) => driven.reload_failed(error),
-                            }
-                        }
+                        crate::reload::host::restore(&driven, checkpoint, &restore_id).await;
 
                         if let Err(error) = driven.run().await {
                             crate::error!(
@@ -1004,12 +997,8 @@ impl<R: Route> Render for Workspace<R> {
         }
 
         if snapshot.reload.request.is_some() {
-            let router = self.router.clone();
-
             if snapshot.reload.phase == crate::reload::ReloadPhase::Quiescing {
-                let host = self.window;
-
-                window.on_next_frame(move |_, _| router.acknowledge_reload_ui(host));
+                self.router.observe_reload_frame(self.window, window);
                 cx.notify();
             }
 
@@ -1333,7 +1322,7 @@ impl<R: Route> gpui::Global for NativeDriver<R> {}
 struct NativeWindows<R: Route> {
     app: gpui::AsyncApp,
     navigator: Navigator<R>,
-    contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
+    contexts: host::WindowContexts,
     views: Rc<RefCell<BTreeMap<WindowId, gpui::WeakEntity<Workspace<R>>>>>,
     chrome: bool,
     navigation_feedback: bool,

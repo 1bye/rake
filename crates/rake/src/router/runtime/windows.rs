@@ -7,44 +7,94 @@ use super::{
     WindowHost, WindowId, WindowState, guard, oneshot, select,
 };
 
+pub(crate) trait HostBinding: std::any::Any {
+    fn detach_window(&self, id: WindowId);
+    fn shutdown(&self);
+    fn begin_reload(&self, windows: Vec<WindowId>);
+    fn reload_ready(&self, visibility: &dyn Fn(WindowId) -> Option<HostVisibility>) -> bool;
+}
+
 impl<R: Route> Router<R> {
     #[cfg(feature = "gpui")]
-    pub(crate) fn bind_initial_window(&self, id: WindowId, contexts: super::WindowContexts) {
-        *self.0.view_contexts.borrow_mut() = Some(contexts);
+    pub(crate) fn bind_host(&self, host: impl HostBinding) {
+        self.0.host_binding.get_or_init(|| Box::new(host));
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn host_binding(&self) -> Option<&dyn HostBinding> {
+        self.0.host_binding.get().map(Box::as_ref)
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn set_initial_window(&self, id: WindowId) {
         self.0.initial_window.set(id);
         self.0.state.borrow_mut().windows =
             std::collections::BTreeMap::from([(id, WindowState::default())]);
     }
 
-    /// Registers the UI context of a window reserved by a custom [`WindowHost`].
-    /// Call from the host's `open` callback before it resolves. The router must have
-    /// been created with [`Self::in_window`]; headless routers reject this method.
-    /// The embedding shell owns redrawing and keeping the shared driver alive.
     #[cfg(feature = "gpui")]
-    pub fn attach_window(
-        &self,
-        id: WindowId,
-        window: &gpui::Window,
-        cx: &gpui::App,
-    ) -> Result<(), OperationError> {
-        if !self.0.state.borrow().windows.contains_key(&id) {
-            return Err(OperationError::WindowUnavailable);
-        }
-
-        let contexts = self.0.view_contexts.borrow();
-        let contexts = contexts.as_ref().ok_or(OperationError::InvalidOptions)?;
-
-        contexts.borrow_mut().insert(id, window.to_async(cx));
-        self.observe_host_in(id, window, cx);
-
-        Ok(())
+    pub(crate) fn set_host_attached(&self, attached: bool) {
+        self.0.has_window.set(attached);
     }
 
-    /// Installs native/embedding window creation before the driver starts.
-    /// The route mount adapter must mount each destination in its navigator's window.
-    /// Browser hosts always reject this capability.
+    #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
+    pub(crate) fn request_host_close(&self, id: WindowId) -> bool {
+        if self.0.quit.borrow().phase == crate::quit::QuitPhase::Ready {
+            return true;
+        }
+
+        if self.0.window_host.borrow().is_none() {
+            drop(self.quit(crate::quit::QuitOptions::default()));
+
+            return false;
+        }
+
+        let opening = {
+            let state = self.0.state.borrow();
+            let Some(window) = state.windows.get(&id) else {
+                return true;
+            };
+
+            window.opening
+        };
+
+        if let Some(operation) = opening {
+            let _ = self.cancel(operation);
+        } else {
+            drop(self.close_window(id));
+        }
+
+        false
+    }
+
+    #[cfg(all(feature = "gpui", target_family = "wasm"))]
+    pub(crate) fn warn_before_unload(&self) -> bool {
+        if self.0.page_reload.replace(false) {
+            return false;
+        }
+
+        let snapshot = self.snapshot();
+
+        snapshot.quit.phase != crate::quit::QuitPhase::Ready
+            && (snapshot.quit.phase.is_pending()
+                || snapshot
+                    .tabs
+                    .iter()
+                    .flat_map(|tab| &tab.entries)
+                    .any(|entry| entry.dirty)
+                || !snapshot.quit.pending_tasks.is_empty()
+                || !snapshot.quit.pending_operations.is_empty()
+                || !self.0.quit_guards.borrow().is_empty())
+    }
+
+    /// Installs guarded host close and, when supported, additional window creation.
+    /// Install before the driver starts. The route mount adapter must mount each
+    /// destination in its navigator's window.
+    ///
+    /// # Errors
+    /// Rejects repeat installation, a running driver, or multi-window support in a browser.
     pub fn window_host(&self, host: impl WindowHost) -> Result<(), OperationError> {
-        if cfg!(target_family = "wasm")
+        if (cfg!(target_family = "wasm") && host.supports_new_windows())
             || self.0.driving.get()
             || self.0.window_host.borrow().is_some()
         {
@@ -56,11 +106,11 @@ impl<R: Route> Router<R> {
         Ok(())
     }
 
-    /// Advertised targets; Web and hosts without a window adapter omit NewWindow.
+    /// Advertised targets; single-window and browser hosts omit NewWindow.
     pub fn supported_targets(&self) -> Vec<OpenTarget> {
         let mut targets = vec![OpenTarget::CurrentTab, OpenTarget::NewTab];
 
-        if self.0.window_host.borrow().is_some() {
+        if self.0.supports_new_windows() {
             targets.push(OpenTarget::NewWindow);
         }
 
@@ -83,11 +133,17 @@ impl<R: Route> Router<R> {
 
     /// Copies one host's tabs, selection and decisions without changing global state.
     pub fn snapshot_in_window(&self, window: WindowId) -> Result<RouterSnapshot, OperationError> {
-        if !self.0.state.borrow().windows.contains_key(&window) {
-            return Err(OperationError::WindowUnavailable);
-        }
+        self.check_window(window)?;
 
         Ok(self.snapshot_filtered(Some(window)))
+    }
+
+    pub(in crate::router) fn check_window(&self, window: WindowId) -> Result<(), OperationError> {
+        if self.0.state.borrow().windows.contains_key(&window) {
+            Ok(())
+        } else {
+            Err(OperationError::WindowUnavailable)
+        }
     }
 
     /// Guards every retained entry before disposing this window atomically.
@@ -248,6 +304,11 @@ impl<R: Route> Navigator<R> {
     /// [`WindowHost`], which would retain the runtime through its own adapter.
     #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
     pub fn router(&self) -> Option<Router<R>> {
+        self.upgrade_router()
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn upgrade_router(&self) -> Option<Router<R>> {
         self.core.upgrade().map(Router)
     }
 
@@ -353,23 +414,31 @@ async fn close<R: Route>(
             }
         }
 
-        #[cfg(feature = "gpui")]
-        core.host.borrow_mut().remove(&window);
         core.tasks.forget_window(window);
-        let host = core.window_host.borrow().clone();
-
-        if let Some(host) = host {
-            host.close(window);
-        }
-
-        #[cfg(feature = "gpui")]
-        if let Some(contexts) = core.view_contexts.borrow().as_ref() {
-            contexts.borrow_mut().remove(&window);
-        }
-
+        core.remove_window_host(window);
         core.notify();
 
         return Ok(());
+    }
+}
+
+impl<R: Route> Core<R> {
+    pub(super) fn supports_new_windows(&self) -> bool {
+        let host = self.window_host.borrow().clone();
+
+        host.is_some_and(|host| host.supports_new_windows())
+    }
+
+    pub(super) fn remove_window_host(&self, id: WindowId) {
+        let host = self.window_host.borrow().clone();
+
+        if let Some(host) = host {
+            host.close(id);
+        }
+
+        if let Some(binding) = self.host_binding.get() {
+            binding.detach_window(id);
+        }
     }
 }
 
@@ -422,19 +491,7 @@ impl<R: Route> Drop for ProvisionalWindow<R> {
         if !self.committed {
             self.core.state.borrow_mut().windows.remove(&self.id);
             self.core.tasks.forget_window(self.id);
-            #[cfg(feature = "gpui")]
-            self.core.host.borrow_mut().remove(&self.id);
-            let host = self.core.window_host.borrow().clone();
-
-            if let Some(host) = host {
-                host.close(self.id);
-            }
-
-            #[cfg(feature = "gpui")]
-            if let Some(contexts) = self.core.view_contexts.borrow().as_ref() {
-                contexts.borrow_mut().remove(&self.id);
-            }
-
+            self.core.remove_window_host(self.id);
             self.core.notify();
         }
     }

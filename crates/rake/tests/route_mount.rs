@@ -12,7 +12,7 @@ use futures::task::LocalSpawnExt as _;
 use rake::http::CancellationToken;
 use rake::reload::{ReloadMechanism, ReloadPhase, ReloadRequest, ReloadState};
 use rake::router::{
-    Activation, CancelReason, EntryId, GuardReason, GuardResult, MountError, MountedRoute,
+    Activation, BlockReason, CancelReason, EntryId, GuardReason, GuardResult, MountError, MountedRoute,
     OpenTarget, Operation, Outcome, PreparedPage, RouteMount, RouteMountContext, RoutePresentation,
     Router, RouterConfig, WindowHost, WindowId,
 };
@@ -315,6 +315,94 @@ fn transfers_prepared_data_and_preserves_mounts_through_history() {
 }
 
 #[test]
+fn replacing_forward_history_disposes_each_truncated_mount_once() {
+    use Destination::{Detail, Home};
+    use Event::{Disposed, Presented};
+    use RoutePresentation::Retained;
+
+    let events = Events::default();
+    let router = router(events.clone(), Default::default());
+    let mut pool = LocalPool::new();
+    drive(&pool, &router);
+
+    let truncated = pool.run_until(async {
+        let nav = router.navigator();
+        let home = committed(nav.open(Home, OpenTarget::NewTab)).await;
+        let tab = nav.tab(home.tab_id);
+        let first = committed(tab.navigate(Detail)).await.entry_id;
+        let second = committed(tab.navigate(Home)).await.entry_id;
+
+        assert_eq!(committed(tab.back()).await.entry_id, first);
+        assert_eq!(committed(tab.back()).await.entry_id, home.entry_id);
+
+        let replacement = committed(tab.navigate(Detail)).await.entry_id;
+        assert_ne!(replacement, first);
+        assert_ne!(replacement, second);
+
+        for entry in [first, second] {
+            assert!(router.entry(entry).is_err());
+        }
+
+        assert!(matches!(
+            tab.forward().wait().await,
+            Ok(Outcome::Blocked(BlockReason::HistoryBoundary)),
+        ));
+        router.shutdown();
+
+        [first, second]
+    });
+
+    pool.run();
+    let events = take(&events);
+
+    for entry in truncated {
+        let last_retained = events
+            .iter()
+            .rposition(|event| *event == Presented(entry, Retained))
+            .expect("truncated mount was hidden");
+        let disposals: Vec<_> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| (*event == Disposed(entry)).then_some(index))
+            .collect();
+
+        assert_eq!(disposals.len(), 1, "disposals for {entry:?}");
+        assert!(
+            last_retained < disposals[0],
+            "hide before disposing {entry:?}"
+        );
+    }
+}
+
+#[test]
+fn closing_the_selected_tab_hides_and_disposes_its_mount_once() {
+    let events = Events::default();
+    let router = router(events.clone(), Default::default());
+    let mut pool = LocalPool::new();
+    drive(&pool, &router);
+
+    pool.run_until(async {
+        let nav = router.navigator();
+        let home = committed(nav.open(Destination::Home, OpenTarget::NewTab)).await;
+        take(&events);
+
+        committed(nav.tab(home.tab_id).close()).await;
+        assert_eq!(
+            take(&events),
+            [
+                Event::Presented(home.entry_id, RoutePresentation::Retained),
+                Event::Disposed(home.entry_id),
+            ],
+        );
+        assert!(router.entry(home.entry_id).is_err());
+
+        router.shutdown();
+    });
+    pool.run();
+    assert!(take(&events).is_empty());
+}
+
+#[test]
 fn cancellation_during_prepare_drops_the_future_without_mounting() {
     let events = Events::default();
     let token = Rc::default();
@@ -499,4 +587,96 @@ fn reload_consumes_provisional_checkpoints_and_becomes_ready_after_attachment() 
     old.shutdown();
     replacement.shutdown();
     pool.run();
+}
+
+struct SingleWindow(Events);
+
+impl WindowHost for SingleWindow {
+    fn supports_new_windows(&self) -> bool {
+        false
+    }
+
+    fn open(&self, _: WindowId, _: Activation) -> LocalBoxFuture<'static, Result<(), MountError>> {
+        panic!("a single-window host must never open an additional window")
+    }
+
+    fn close(&self, id: WindowId) {
+        self.0.borrow_mut().push(Event::Closed(id));
+    }
+
+    fn activate(&self, _: WindowId) {}
+}
+
+#[test]
+fn single_window_host_can_guard_close_without_advertising_new_windows() {
+    use rake::router::{DisposeReason, GuardKind, OperationError};
+    use std::cell::Cell;
+
+    let events = Events::default();
+    let router = router(events.clone(), Default::default());
+    router
+        .window_host(SingleWindow(events.clone()))
+        .expect("install single-window host");
+
+    let mut pool = LocalPool::new();
+    drive(&pool, &router);
+    pool.run_until(async {
+        let nav = router.navigator();
+        let home = committed(nav.open(Destination::Home, OpenTarget::NewTab)).await;
+        let entry = router.entry(home.entry_id).expect("opened entry");
+        let allow_close = Rc::new(Cell::new(false));
+
+        entry
+            .on_dispose({
+                let allow_close = allow_close.clone();
+                move |context| {
+                    let allow_close = allow_close.get();
+                    async move {
+                        assert!(matches!(
+                            context.kind,
+                            GuardKind::Dispose(DisposeReason::CloseWindow)
+                        ));
+
+                        if allow_close {
+                            GuardResult::Allow
+                        } else {
+                            GuardResult::Deny(GuardReason("Keep the window open".into()))
+                        }
+                    }
+                }
+            })
+            .expect("install close guard");
+        take(&events);
+
+        assert_eq!(
+            router.supported_targets(),
+            [OpenTarget::CurrentTab, OpenTarget::NewTab]
+        );
+        assert!(matches!(
+            nav.open(Destination::Detail, OpenTarget::NewWindow)
+                .wait()
+                .await,
+            Err(OperationError::UnsupportedCapability(OpenTarget::NewWindow))
+        ));
+        assert!(matches!(
+            router.close_window(home.window_id).wait().await,
+            Ok(Outcome::Blocked(_))
+        ));
+        assert!(take(&events).is_empty());
+        assert!(router.entry(home.entry_id).is_ok());
+
+        allow_close.set(true);
+        committed(router.close_window(home.window_id)).await;
+        router.shutdown();
+        assert_eq!(
+            take(&events),
+            [
+                Event::Presented(home.entry_id, RoutePresentation::Retained),
+                Event::Disposed(home.entry_id),
+                Event::Closed(home.window_id),
+            ],
+        );
+    });
+    pool.run();
+    assert!(take(&events).is_empty());
 }

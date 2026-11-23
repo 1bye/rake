@@ -215,8 +215,14 @@ pub struct DecisionRequest {
 /// mount adapter; its future must clean up on failure/cancellation. After success,
 /// Rake calls `close` if mounting is cancelled or fails. Hosts must not retain a
 /// strong router in this adapter, which would form an ownership cycle. Browser
-/// runtimes reject this capability and never turn NewWindow into NewTab.
+/// runtimes only accept single-window hosts and never turn NewWindow into NewTab.
 pub trait WindowHost: 'static {
+    /// Whether the host can open additional windows. Keep this fixed after installation.
+    /// Returning false still enables guarded close for the initial window.
+    fn supports_new_windows(&self) -> bool {
+        true
+    }
+
     /// Creates an empty host on the UI loop, honoring the requested activation.
     fn open(
         &self,
