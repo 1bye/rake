@@ -148,6 +148,7 @@ impl Element for SelectableText {
 
         if let Some(handle) = selection {
             let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+
             let registration = TextSelectionRegistration::new(hitbox, bounds)
                 .with_text_bounds(vec![bounds])
                 .with_rendered_element(handle, window, cx);
@@ -168,6 +169,7 @@ impl Element for SelectableText {
     ) {
         if let Some(handle) = selection {
             let layout = self.styled_text.layout();
+
             let projection = handle.update_runs(
                 &[TextSelectionRun::new(
                     self.text.clone(),
