@@ -38,7 +38,7 @@ locale-icu = ["locale", "dep:fixed_decimal", "dep:icu_calendar", "dep:icu_dateti
 experimental-view = []
 experimental-reactive = ["gpui", "rake-macros/reactive", "dep:slotmap"]
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support", "gpui_platform/runtime_shaders", "gpui_fast_platform?/runtime_shaders"]
-gpui = ["dep:gpui_pre_apple", "dep:windows", "dep:oo7", "dep:zbus", "dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+gpui = ["dep:anyhow", "dep:image", "dep:gpui_pre_apple", "dep:windows", "dep:oo7", "dep:zbus", "dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 fluent-bundle = { version = "0.16", optional = true }
@@ -53,7 +53,7 @@ icu_provider_blob = { version = "2.4", optional = true }
 writeable = { version = "0.6", optional = true }
 zeroize = "1"
 rake-shortcuts = { version = "=0.1.0-alpha.7", path = "../rake-shortcuts", optional = true }
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
 rake-autostart = { version = "=0.1.0-alpha.7", path = "../rake-autostart", optional = true }
 rake-tray = { version = "=0.1.0-alpha.7", path = "../rake-tray", optional = true }
 rake-updates = { version = "=0.1.0-alpha.7", path = "../rake-updates", optional = true }
@@ -93,7 +93,7 @@ backtrace = { version = "0.3.76", optional = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 blaze-live = { package = "rake-blaze-live", version = "=0.1.0-alpha.7", path = "../../vendor/blaze-live", optional = true }
 sys-locale = { version = "0.3", optional = true }
-anyhow = "1"
+anyhow = { version = "1", optional = true }
 libc = "0.2"
 async-io = "2.6"
 blocking = "1.7"
