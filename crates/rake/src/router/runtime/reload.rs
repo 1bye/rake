@@ -12,7 +12,7 @@ use crate::reload::{
     ReloadState, ReloadStatus, TabCheckpoint, WorkspaceCheckpoint,
 };
 
-use crate::router::{GenerationId, Route, TabMode};
+use crate::router::{GenerationId, Route, RouteMountContext};
 use crate::tasks::{HostVisibility, TaskOwner};
 
 use super::{Entry, EntryHandle, Router, Tab};
@@ -516,7 +516,8 @@ impl<R: Route> Router<R> {
                     dirty: Cell::new(saved.dirty),
                     alive: Cell::new(true),
                     guards: RefCell::new(Vec::new()),
-                    resource: RefCell::new(None),
+                    mount: RefCell::new(None),
+                    presentation: Cell::new(None),
                     cancellation: CancellationToken::new(),
                     reload_capture: RefCell::new(None),
                     restored_state: RefCell::new(saved.state.clone()),
@@ -589,10 +590,28 @@ impl<R: Route> Router<R> {
             let mut entries = Vec::new();
 
             for (saved, entry, handle, navigator, prepared) in pending_entries {
-                let resource =
-                    (self.0.prepared_mount)(entry.destination.clone(), handle, navigator, prepared)
-                        .await
-                        .map_err(|error| ReloadError::State(error.to_string()))?;
+                let stopped = navigator.clone();
+                let attaching = (self.0.attach)(
+                    &entry.destination,
+                    prepared,
+                    RouteMountContext {
+                        window_id: entry.window,
+                        entry_id: entry.id,
+                        entry: handle,
+                        navigator,
+                    },
+                );
+
+                let mounted = match select(attaching, Box::pin(stopped.stopped())).await {
+                    Either::Left((result, _)) => {
+                        result.map_err(|error| ReloadError::State(error.to_string()))?
+                    }
+                    Either::Right(((), _)) => {
+                        return Err(ReloadError::State("routing runtime stopped".into()));
+                    }
+                };
+
+                *entry.mount.borrow_mut() = Some(Rc::from(mounted));
 
                 if self.0.shutdown.get() {
                     return Err(ReloadError::State("routing runtime stopped".into()));
@@ -607,7 +626,6 @@ impl<R: Route> Router<R> {
 
                 entry.dirty.set(saved.dirty);
                 entry.revision.set(saved.revision);
-                *entry.resource.borrow_mut() = Some(resource);
                 entries.push(entry);
             }
 
@@ -681,6 +699,10 @@ impl<R: Route> Router<R> {
             }
         }
 
+        for window in window_ids {
+            self.0.sync_presentation(window);
+        }
+
         *self.0.reload.borrow_mut() = ReloadStatus {
             restored_from: Some(checkpoint.source_runtime),
             generation,
@@ -689,25 +711,6 @@ impl<R: Route> Router<R> {
             error: None,
         };
         self.0.tasks.resume(generation, checkpoint.run_sequence);
-        {
-            let state = self.0.state.borrow();
-
-            for tab in &state.tabs {
-                for entry in &tab.entries {
-                    let current = entry.id == tab.current().id;
-
-                    entry.scope.update(
-                        current,
-                        current
-                            && state
-                                .windows
-                                .get(&tab.window)
-                                .is_some_and(|host| host.selected == Some(tab.id)),
-                        tab.mode == TabMode::Live,
-                    );
-                }
-            }
-        }
         self.0.emit_history(true);
         self.0.notify();
 

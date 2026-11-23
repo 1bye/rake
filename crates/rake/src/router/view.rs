@@ -19,6 +19,7 @@ use crate::inspection::InspectRoot as _;
 
 #[cfg(not(target_family = "wasm"))]
 use futures::FutureExt as _;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -27,14 +28,17 @@ use gpui::prelude::*;
 use gpui::{AnyView, Context, ElementId, IntoElement, Render, RenderOnce, Window, div, rgb};
 
 use crate::Services;
+use crate::http::CancellationToken;
+use crate::services::ServiceRegistry;
 use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
+use futures::future::LocalBoxFuture;
 
 use super::layout::{LayoutContext, LayoutFactory};
-use super::runtime::{AdmissionCallback, Guard, Prepare, PreparedMount, Resource};
+use super::runtime::{AdmissionCallback, Guard};
 
 use super::{
-    EntryHandle, MountError, Navigator, PreparedPage, Route, Router, RouterConfig, TabHandle,
-    TabId, WebConfig, WindowId,
+    EntryHandle, MountError, MountedRoute, Navigator, PreparedPage, Route, RouteMount,
+    RouteMountContext, Router, RouterConfig, TabHandle, TabId, WebConfig, WindowId,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -276,55 +280,67 @@ impl<R: Route> Router<R> {
             .insert(initial_window, window.to_async(cx));
         let collector = services.diagnostics();
         let registry = services.registry();
-        let mounting_contexts = contexts.clone();
-        let background = cx.background_executor().clone();
-
-        let preparing_views = views.clone();
-        let preparing_services = services.clone();
-
-        let prepare: Prepare<R> = Rc::new(move |destination, _entry, _navigator, cancellation| {
-            let views = preparing_views.clone();
-
-            let context = crate::loading::LoadContext::new(
-                preparing_services.clone(),
-                cancellation,
-                background.clone(),
-            );
-
-            Box::pin(async move { views.prepare(&destination, context).await })
-        });
-
-        let mount: PreparedMount<R> = Rc::new(move |destination, entry, navigator, prepared| {
-            let context = mounting_contexts
-                .borrow()
-                .get(&navigator.window_id())
-                .cloned();
-
-            let views = views.clone();
-            let services = services.clone();
-
-            Box::pin(async move {
-                let mut context =
-                    context.ok_or_else(|| MountError("The target window has closed.".into()))?;
-
-                let page = PageContext::new(navigator, entry, services)?;
-
-                context
-                    .update(|window, cx| {
-                        views.mount_prepared(&destination, prepared, page, window, cx)
-                    })
-                    .map_err(|error| MountError(error.to_string()))?
-                    .map(|view| Rc::new(view) as Resource)
-            })
-        });
-
-        let router = Router::with_prepared_mount(config, collector, prepare, mount);
+        let adapter = GpuiRouteMount {
+            views,
+            contexts: contexts.clone(),
+            services,
+            background: cx.background_executor().clone(),
+        };
+        let router = Router::with_route_mount_and_collector(config, registry, collector, adapter);
 
         router.bind_initial_window(initial_window, contexts);
-        router.client().set_services(registry);
         router.observe_host(window, cx);
 
         router
+    }
+}
+
+struct GpuiRouteMount<R: Route> {
+    views: Rc<dyn RouteViews<R>>,
+    contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
+    services: Services,
+    background: gpui::BackgroundExecutor,
+}
+
+impl MountedRoute for AnyView {}
+
+impl<R: Route> RouteMount<R> for GpuiRouteMount<R> {
+    fn prepare(
+        &self,
+        destination: &R,
+        _services: ServiceRegistry,
+        cancellation: CancellationToken,
+    ) -> LocalBoxFuture<'static, Result<PreparedPage, MountError>> {
+        let context = crate::loading::LoadContext::new(
+            self.services.clone(),
+            cancellation,
+            self.background.clone(),
+        );
+
+        self.views.prepare(destination, context)
+    }
+
+    fn mount(
+        &self,
+        destination: &R,
+        prepared: PreparedPage,
+        context: RouteMountContext<R>,
+    ) -> LocalBoxFuture<'static, Result<Box<dyn MountedRoute>, MountError>> {
+        let window = self.contexts.borrow().get(&context.window_id).cloned();
+        let destination = destination.clone();
+        let views = self.views.clone();
+        let services = self.services.clone();
+
+        Box::pin(async move {
+            let mut window =
+                window.ok_or_else(|| MountError("The target window has closed.".into()))?;
+            let page = PageContext::new(context.navigator, context.entry, services)?;
+
+            window
+                .update(|window, cx| views.mount_prepared(&destination, prepared, page, window, cx))
+                .map_err(|error| MountError(error.to_string()))?
+                .map(|view| Box::new(view) as Box<dyn MountedRoute>)
+        })
     }
 }
 
@@ -484,9 +500,14 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
         let router = self.navigator.runtime().ok();
 
         let view = router.as_ref().and_then(|router| {
-            router
-                .resource(self.window)
-                .and_then(|resource| resource.downcast_ref::<AnyView>().cloned())
+            let mounted = router.presented_mount(self.window)?;
+            let view: &dyn Any = mounted.as_ref();
+            #[cfg(test)]
+            let view = view
+                .downcast_ref::<super::runtime::Resource>()
+                .map_or(view, AsRef::as_ref);
+
+            view.downcast_ref::<AnyView>().cloned()
         });
 
         #[cfg(feature = "devtools")]

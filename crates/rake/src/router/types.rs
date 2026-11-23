@@ -9,34 +9,29 @@ use super::{
 
 /// Opaque, owned data prepared before a route is mounted.
 ///
-/// This is an internal bridge between the statically dispatched route loader
-/// and the runtime's erased mount callback. The value is consumed exactly once;
-/// dropping it drops the loaded data as well. Ordinary applications should use
-/// the `loaded(...)` arm of `rake::routes!` rather than this type directly.
-#[doc(hidden)]
+/// The value is consumed by the mount callback or dropped on cancellation.
 pub struct PreparedPage(Option<Box<dyn Any>>);
 
 impl PreparedPage {
-    /// Creates an empty preparation for synchronous route views.
-    #[doc(hidden)]
+    /// Creates an empty preparation for routes with no loading step.
     pub fn empty() -> Self {
         Self(None)
     }
 
     /// Wraps owned route data for a custom preparation implementation.
-    #[doc(hidden)]
     pub fn from_value<T: 'static>(value: T) -> Self {
         Self(Some(Box::new(value)))
     }
 
     /// Returns whether this preparation carries no route data.
-    #[doc(hidden)]
     pub fn is_empty(&self) -> bool {
         self.0.is_none()
     }
 
     /// Consumes the preparation and recovers its concrete route data.
-    #[doc(hidden)]
+    ///
+    /// # Errors
+    /// Returns a mount error if the preparation is empty or has another type.
     pub fn downcast<T: 'static>(self) -> Result<T, MountError> {
         self.0
             .ok_or_else(|| MountError("route preparation is empty".into()))?

@@ -4,6 +4,7 @@
 //! [`RuntimeContext`] deliberately keeps only a weak navigator, so a view or
 //! task may retain its capabilities without retaining the runtime itself.
 
+#[cfg(feature = "updates")]
 use std::rc::Rc;
 
 use futures::future::{Either, select};
@@ -28,15 +29,12 @@ pub struct Runtime<R: Route = NoRoute> {
 impl Runtime<NoRoute> {
     /// Creates a headless runtime with the supplied application services.
     pub fn new(config: RouterConfig, services: Services) -> Self {
-        let router = Router::<NoRoute>::with_mount(
+        let router = Router::with_route_mount_and_collector(
             config,
+            services.registry(),
             services.diagnostics(),
-            Rc::new(|_, _, _| {
-                Box::pin(async { Ok(Rc::new(()) as crate::router::runtime::Resource) })
-            }),
+            crate::router::mount::Headless,
         );
-
-        router.client().set_services(services.registry());
 
         Self { router, services }
     }

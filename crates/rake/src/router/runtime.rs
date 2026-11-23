@@ -1,5 +1,6 @@
 //! Local operation scheduler and the authoritative router state owner.
 
+#[cfg(test)]
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -25,11 +26,11 @@ use super::{
     Activation, BlockReason, BrowserCheckpoint, CancelReason, ChoiceAction, Closed, DecisionChoice,
     DecisionError, DecisionId, DecisionRequest, DecisionSnapshot, DisposeReason, Entered, EntryId,
     EntrySnapshot, GuardContext, GuardKind, GuardReason, GuardResult, HistoryChange, ModeChanged,
-    MountError, NavigationKey, NavigationState, NavigationStatus, OpenOptions, OpenTarget, Opened,
-    Operation, OperationError, OperationId, OperationState, Outcome, PreparedPage,
-    QuitGuardContext, RevealScope, Revealed, Route, RouteDecodeError, RouterConfig, RouterSnapshot,
-    RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId,
-    WindowSnapshot,
+    MountError, MountedRoute, NavigationKey, NavigationState, NavigationStatus, OpenOptions,
+    OpenTarget, Opened, Operation, OperationError, OperationId, OperationState, Outcome,
+    PreparedPage, QuitGuardContext, RevealScope, Revealed, Route, RouteDecodeError, RouteMount,
+    RouteMountContext, RoutePresentation, RouterConfig, RouterSnapshot, RuntimeId, Selected, TabId,
+    TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId, WindowSnapshot,
 };
 
 mod admission;
@@ -50,6 +51,7 @@ pub(crate) use crate::router::admission::Callback as AdmissionCallback;
 pub(crate) type QuitGuard =
     Rc<dyn Fn(QuitGuardContext) -> LocalBoxFuture<'static, Result<(), GuardReason>>>;
 
+#[cfg(test)]
 pub(crate) type Resource = Rc<dyn Any>;
 
 #[cfg(feature = "gpui")]
@@ -62,6 +64,7 @@ enum HostClosePolicy {
     Detach,
 }
 
+#[cfg(test)]
 pub(crate) type Mount<R> = Rc<
     dyn Fn(
         R,
@@ -79,6 +82,7 @@ pub(crate) type Prepare<R> = Rc<
     ) -> LocalBoxFuture<'static, Result<PreparedPage, MountError>>,
 >;
 
+#[cfg(test)]
 pub(crate) type PreparedMount<R> = Rc<
     dyn Fn(
         R,
@@ -87,6 +91,17 @@ pub(crate) type PreparedMount<R> = Rc<
         PreparedPage,
     ) -> LocalBoxFuture<'static, Result<Resource, MountError>>,
 >;
+
+type Attach<R> = Rc<
+    dyn Fn(
+        &R,
+        PreparedPage,
+        RouteMountContext<R>,
+    ) -> LocalBoxFuture<'static, Result<Box<dyn MountedRoute>, MountError>>,
+>;
+
+#[cfg(test)]
+impl MountedRoute for Resource {}
 
 type ReloadCapture = Rc<dyn Fn() -> Result<crate::reload::Checkpoint, crate::reload::ReloadError>>;
 
@@ -103,7 +118,8 @@ struct Entry<R: Route> {
     dirty: Cell<bool>,
     alive: Cell<bool>,
     guards: RefCell<Vec<Guard<R>>>,
-    resource: RefCell<Option<Resource>>,
+    mount: RefCell<Option<Rc<dyn MountedRoute>>>,
+    presentation: Cell<Option<RoutePresentation>>,
     cancellation: CancellationToken,
     reload_capture: RefCell<Option<ReloadCapture>>,
     restored_state: RefCell<Option<crate::reload::Checkpoint>>,
@@ -111,10 +127,33 @@ struct Entry<R: Route> {
 }
 
 impl<R: Route> Entry<R> {
+    fn present(&self, presentation: RoutePresentation) {
+        let mount = self.mount.borrow().clone();
+
+        if let Some(mount) = mount
+            && self.presentation.replace(Some(presentation)) != Some(presentation)
+        {
+            mount.presentation_changed(presentation);
+        }
+    }
+
     fn dispose(&self) {
-        self.scope.close();
         self.alive.set(false);
+        self.scope.close();
         self.cancellation.cancel();
+
+        let mount = self.mount.take();
+
+        if let Some(mount) = mount {
+            if matches!(
+                self.presentation.take(),
+                Some(RoutePresentation::Presented(_))
+            ) {
+                mount.presentation_changed(RoutePresentation::Retained);
+            }
+
+            mount.dispose();
+        }
     }
 }
 
@@ -319,7 +358,7 @@ struct Core<R: Route> {
     config: RouterConfig,
     collector: Collector,
     prepare: Prepare<R>,
-    prepared_mount: PreparedMount<R>,
+    attach: Attach<R>,
     window_host: RefCell<Option<Rc<dyn WindowHost>>>,
     window_closes: RefCell<BTreeMap<WindowId, Operation<WindowClosed>>>,
     guards: RefCell<Vec<Guard<R>>>,
@@ -335,6 +374,53 @@ impl<R: Route> Core<R> {
     fn notify(&self) {
         self.state.borrow_mut().revision += 1;
         self.event.notify(usize::MAX);
+    }
+
+    fn sync_presentation(&self, window: WindowId) {
+        let (retained, presented) = {
+            let state = self.state.borrow();
+            let Some(host) = state.windows.get(&window) else {
+                return;
+            };
+
+            let mut retained = Vec::new();
+            let mut presented = None;
+
+            for tab in state.tabs.iter().filter(|tab| tab.window == window) {
+                for entry in &tab.entries {
+                    let current = entry.id == tab.entries[tab.cursor].id;
+                    let selected = current && host.selected == Some(tab.id);
+                    entry
+                        .scope
+                        .update(current, selected, tab.mode == TabMode::Live);
+
+                    if selected {
+                        presented = Some(entry.clone());
+                    } else {
+                        retained.push(entry.clone());
+                    }
+                }
+            }
+
+            (retained, presented)
+        };
+
+        for entry in retained {
+            entry.present(RoutePresentation::Retained);
+        }
+
+        if let Some(entry) = presented {
+            let visibility = self
+                .state
+                .borrow()
+                .windows
+                .get(&window)
+                .map(|host| host.visibility);
+
+            if let Some(visibility) = visibility {
+                entry.present(RoutePresentation::Presented(visibility));
+            }
+        }
     }
 
     fn status(&self, id: OperationId, status: OperationState) {
@@ -714,24 +800,53 @@ impl<R: Route> Core<R> {
 pub struct Router<R: Route>(Rc<Core<R>>);
 
 impl<R: Route> Router<R> {
-    /// Creates a headless routing runtime. GPUI applications install their real mount adapter.
+    /// Creates a headless routing runtime.
     pub fn new(config: RouterConfig) -> Self {
-        Self::with_mount(
-            config,
-            Collector::default(),
-            Rc::new(|_, _, _| Box::pin(async { Ok(Rc::new(()) as Resource) })),
-        )
+        Self::with_services(config, crate::services::ServiceRegistry::new())
     }
 
     /// Creates a headless runtime with a fixed typed application composition.
     pub fn with_services(config: RouterConfig, services: crate::services::ServiceRegistry) -> Self {
-        let router = Self::new(config);
+        Self::with_route_mount(config, services, super::mount::Headless)
+    }
+
+    /// Creates a router whose retained route views are owned by the host adapter.
+    ///
+    /// The host polls [`Self::run`] on its event loop, supplies visibility with
+    /// [`Self::set_window_visibility`] and stops the router on host teardown.
+    /// The initial window already exists. Install a [`WindowHost`] to support
+    /// opening additional physical hosts.
+    pub fn with_route_mount(
+        config: RouterConfig,
+        services: crate::services::ServiceRegistry,
+        adapter: impl RouteMount<R>,
+    ) -> Self {
+        Self::with_route_mount_and_collector(config, services, Collector::default(), adapter)
+    }
+
+    pub(crate) fn with_route_mount_and_collector(
+        config: RouterConfig,
+        services: crate::services::ServiceRegistry,
+        collector: Collector,
+        adapter: impl RouteMount<R>,
+    ) -> Self {
+        let adapter = Rc::new(adapter);
+        let preparing = adapter.clone();
+        let preparation_services = services.clone();
+        let prepare = Rc::new(move |destination: R, _, _, cancellation| {
+            preparing.prepare(&destination, preparation_services.clone(), cancellation)
+        });
+        let attach: Attach<R> = Rc::new(move |destination, prepared, context| {
+            adapter.mount(destination, prepared, context)
+        });
+        let router = Self::with_mount_callbacks(config, collector, prepare, attach);
 
         router.client().set_services(services);
 
         router
     }
 
+    #[cfg(test)]
     pub(crate) fn with_mount(config: RouterConfig, collector: Collector, mount: Mount<R>) -> Self {
         let prepared_mount: PreparedMount<R> =
             Rc::new(move |destination, entry, navigator, _| mount(destination, entry, navigator));
@@ -742,11 +857,32 @@ impl<R: Route> Router<R> {
         Self::with_prepared_mount(config, collector, prepare, prepared_mount)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_prepared_mount(
         config: RouterConfig,
         collector: Collector,
         prepare: Prepare<R>,
         mount: PreparedMount<R>,
+    ) -> Self {
+        let attach: Attach<R> = Rc::new(move |destination, prepared, context| {
+            let mounted = mount(
+                destination.clone(),
+                context.entry,
+                context.navigator,
+                prepared,
+            );
+
+            Box::pin(async move { Ok(Box::new(mounted.await?) as Box<dyn MountedRoute>) })
+        });
+
+        Self::with_mount_callbacks(config, collector, prepare, attach)
+    }
+
+    fn with_mount_callbacks(
+        config: RouterConfig,
+        collector: Collector,
+        prepare: Prepare<R>,
+        attach: Attach<R>,
     ) -> Self {
         let runtime = RuntimeId(uuid::Uuid::new_v4());
         let tasks = WorkRuntime::new(runtime, config.tasks.clone(), collector.clone());
@@ -791,7 +927,7 @@ impl<R: Route> Router<R> {
             config,
             collector,
             prepare,
-            prepared_mount: mount,
+            attach,
             window_host: RefCell::new(None),
             window_closes: RefCell::new(BTreeMap::new()),
             guards: RefCell::new(Vec::new()),
@@ -1319,16 +1455,26 @@ impl<R: Route> Router<R> {
         #[cfg(feature = "gpui")]
         self.0.host.borrow_mut().clear();
 
-        for token in self.0.state.borrow().tokens.values() {
-            token.cancel();
-        }
+        let entries: Vec<_> = {
+            let state = self.0.state.borrow();
 
-        for tab in &self.0.state.borrow().tabs {
-            tab.scope.close();
-
-            for entry in &tab.entries {
-                entry.dispose();
+            for token in state.tokens.values() {
+                token.cancel();
             }
+
+            for tab in &state.tabs {
+                tab.scope.close();
+            }
+
+            state
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.entries.iter().cloned())
+                .collect()
+        };
+
+        for entry in entries {
+            entry.dispose();
         }
 
         self.0.work.notify(usize::MAX);
@@ -1572,7 +1718,7 @@ impl<R: Route> Router<R> {
     }
 
     #[cfg(feature = "gpui")]
-    pub(crate) fn resource(&self, window: WindowId) -> Option<Resource> {
+    pub(crate) fn presented_mount(&self, window: WindowId) -> Option<Rc<dyn MountedRoute>> {
         let state = self.0.state.borrow();
 
         let entry = state
@@ -1580,7 +1726,7 @@ impl<R: Route> Router<R> {
             .ok()?
             .current();
 
-        entry.resource.borrow().clone()
+        entry.mount.borrow().clone()
     }
 }
 
@@ -2489,7 +2635,8 @@ fn fresh<R: Route>(
         dirty: Cell::new(false),
         alive: Cell::new(true),
         guards: RefCell::new(Vec::new()),
-        resource: RefCell::new(None),
+        mount: RefCell::new(None),
+        presentation: Cell::new(None),
         cancellation: CancellationToken::new(),
         reload_capture: RefCell::new(None),
         restored_state: RefCell::new(None),
@@ -2863,10 +3010,11 @@ async fn transition<R: Route>(
 
     'plan: loop {
         action.check(core)?;
+        // Drop the provisional entry before closing its native host on rollback.
+        let mut provisional = None;
         let plan = plan(core, &action, window)?;
 
         core.navigation_plan(id, &action, window, &plan.entry);
-        let mut provisional = None;
 
         loop {
             let mut approvals = Vec::new();
@@ -2896,7 +3044,7 @@ async fn transition<R: Route>(
             let mut prepared = PreparedPage::empty();
             let mut mount_input = None;
 
-            if plan.entry.resource.borrow().is_none()
+            if plan.entry.mount.borrow().is_none()
                 && !matches!(plan.transition, Transition::Close | Transition::Mode(_))
             {
                 let handle = EntryHandle {
@@ -3020,11 +3168,15 @@ async fn transition<R: Route>(
             }
 
             if let Some((handle, navigator)) = mount_input {
-                let resource = (core.prepared_mount)(
-                    plan.entry.destination.clone(),
-                    handle,
-                    navigator,
+                let mounted = (core.attach)(
+                    &plan.entry.destination,
                     prepared,
+                    RouteMountContext {
+                        window_id: plan.entry.window,
+                        entry_id: plan.entry.id,
+                        entry: handle,
+                        navigator,
+                    },
                 )
                 .instrument(tracing::info_span!("router.mount", entry_id = %plan.entry.id))
                 .await
@@ -3034,7 +3186,7 @@ async fn transition<R: Route>(
                     OperationError::Mount(error)
                 })?;
 
-                *plan.entry.resource.borrow_mut() = Some(resource);
+                *plan.entry.mount.borrow_mut() = Some(Rc::from(mounted));
             }
 
             action.check(core)?;
@@ -3150,11 +3302,6 @@ fn commit<R: Route>(
 
     let tab = plan.entry.tab;
 
-    for (entry, _) in &plan.disposed {
-        entry.dispose();
-        state.invalidate(Some(entry.id));
-    }
-
     match plan.transition {
         Transition::New(activation, mode) => {
             state.tabs.push(Tab {
@@ -3269,26 +3416,17 @@ fn commit<R: Route>(
         .operations
         .insert(operation_id, OperationState::Committed);
 
-    drop(state);
-    {
-        let state = core.state.borrow();
-
-        for tab in &state.tabs {
-            for entry in &tab.entries {
-                let current = entry.id == tab.current().id;
-
-                entry.scope.update(
-                    current,
-                    current
-                        && state
-                            .windows
-                            .get(&tab.window)
-                            .is_some_and(|host| host.selected == Some(tab.id)),
-                    tab.mode == TabMode::Live,
-                );
-            }
-        }
+    for (entry, _) in &plan.disposed {
+        state.invalidate(Some(entry.id));
     }
+
+    drop(state);
+
+    for (entry, _) in &plan.disposed {
+        entry.dispose();
+    }
+
+    core.sync_presentation(window);
     core.notify();
 
     if matches!(action, Action::Reveal(..) | Action::Select(_)) {

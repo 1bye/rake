@@ -235,6 +235,7 @@ impl<R: Route> Router<R> {
         host.visibility = visibility;
         drop(state);
         self.0.tasks.window_visibility(window, visibility);
+        self.0.sync_presentation(window);
         self.0.notify();
 
         Ok(())
@@ -338,17 +339,20 @@ async fn close<R: Route>(
 
         state.tabs = retained;
 
-        for tab in &removed {
-            tab.scope.close();
-
-            for entry in &tab.entries {
-                entry.dispose();
-                state.invalidate(Some(entry.id));
-            }
+        for entry in removed.iter().flat_map(|tab| &tab.entries) {
+            state.invalidate(Some(entry.id));
         }
 
         drop(state);
-        drop(removed);
+
+        for tab in removed {
+            tab.scope.close();
+
+            for entry in tab.entries {
+                entry.dispose();
+            }
+        }
+
         #[cfg(feature = "gpui")]
         core.host.borrow_mut().remove(&window);
         core.tasks.forget_window(window);

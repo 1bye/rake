@@ -46,6 +46,7 @@ mod navigation_view;
 pub use navigation_view::NavigationBoundary;
 
 pub(crate) mod admission;
+pub(crate) mod mount;
 #[cfg(feature = "gpui")]
 mod page;
 pub(crate) mod runtime;
@@ -55,6 +56,7 @@ pub(crate) mod view;
 pub(crate) mod web;
 
 pub use admission::{Admission, AdmissionContext};
+pub use mount::{MountedRoute, RouteMount, RouteMountContext, RoutePresentation};
 
 #[cfg(feature = "gpui")]
 #[doc(hidden)]
