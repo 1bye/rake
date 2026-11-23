@@ -76,6 +76,8 @@ jobs:
           # This parallel job is short; keep download hits without a second Wasm target tree.
           cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check rake-core dependencies (native and Wasm)
+        run: bash scripts/check-core-dependencies.sh
       - name: Portable API lints
         run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
       - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
