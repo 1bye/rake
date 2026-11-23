@@ -3,6 +3,7 @@
 mod button;
 mod link;
 mod paragraph;
+mod selectable_text;
 
 pub use link::{HrefKind, classify_href, install_link_router};
 

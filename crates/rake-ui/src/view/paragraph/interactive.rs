@@ -16,6 +16,7 @@ use std::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{ParagraphText, layout};
+use crate::view::selectable_text::SelectableText;
 
 type LinkInspector = dyn Fn(gpui::Stateful<gpui::Div>, Option<&FocusHandle>) -> AnyElement;
 type PointerGesture = Rc<Cell<Option<(Point<Pixels>, bool)>>>;
@@ -104,10 +105,8 @@ impl Frame {
         let styled = StyledText::new(visible.clone()).with_runs(runs);
         let text_layout = styled.layout().clone();
 
-        let mut text = gpui_base::SelectableText::new("selection", visible.clone())
-            .styled(styled)
-            .selectable(paragraph.selectable)
-            .into_any_element();
+        let mut text =
+            SelectableText::new(visible.clone(), styled, paragraph.selectable).into_any_element();
 
         text.layout_as_root(bounds.size.map(gpui::AvailableSpace::Definite), window, cx);
         text.prepaint_at(bounds.origin, window, cx);

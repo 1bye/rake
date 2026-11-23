@@ -47,8 +47,11 @@ fn generated_app_builds_natively_and_for_the_browser() {
         packages
             .iter()
             .any(|package| package["name"].as_str() == Some("gpui-base")
-                && package.get("source").is_none()),
-        "external apps must retain Rake's patched selection runtime"
+                && package["version"].as_str() == Some("0.9.0")
+                && package["source"]
+                    .as_str()
+                    .is_some_and(|source| source.starts_with("registry+"))),
+        "external apps must resolve stock GPUI Base 0.9.0"
     );
 
     for name in ["rake-blaze-live", "gpui-fast", "hdrhistogram"] {

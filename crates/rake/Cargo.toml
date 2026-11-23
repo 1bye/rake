@@ -1,6 +1,6 @@
 [package]
 name = "rake-app"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -52,7 +52,7 @@ icu_provider = { version = "2.4", features = ["sync"], optional = true }
 icu_provider_blob = { version = "2.4", optional = true }
 writeable = { version = "0.6", optional = true }
 zeroize = "1"
-rake-shortcuts = { version = "=0.1.0-alpha.4", path = "../rake-shortcuts", optional = true }
+rake-shortcuts = { version = "=0.1.0-alpha.5", path = "../rake-shortcuts", optional = true }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
 rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", optional = true }
@@ -62,7 +62,7 @@ rake-ui = { workspace = true, optional = true }
 rake-native = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }
 rake-protocol.workspace = true
-rake-macros = { version = "=0.1.0-alpha.4", path = "../rake-macros" }
+rake-macros = { version = "=0.1.0-alpha.5", path = "../rake-macros" }
 rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true

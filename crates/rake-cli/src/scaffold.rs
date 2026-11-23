@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(dependency["rake"]["package"].as_str(), Some("rake-app"));
         assert_eq!(
             dependency["rake"]["version"].as_str(),
-            Some("=0.1.0-alpha.5")
+            Some("=0.1.0-alpha.6")
         );
     }
 
