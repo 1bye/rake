@@ -1,6 +1,6 @@
 # Experimental function components
 
-Enable `experimental-reactive` on a local `rake-app` dependency to use
+Enable `experimental-reactive` on a `rake-app` dependency to use
 `#[rake::component]` and `rake::reactive`. This source-checkout prototype follows
 [issue #27](https://github.com/1bye/rake/issues/27)'s signals redesign. It replaces
 the earlier `experimental-components` hooks API and is not enabled by default.

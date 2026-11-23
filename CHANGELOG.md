@@ -1,5 +1,27 @@
 # Changelog
 
+## SDK 0.1.0-alpha.6 and CLI 0.1.0-alpha.7 — 2026-11-23
+
+- Added the app-scoped native keychain secrets API, owned global shortcut
+  registrations, and single-instance activation forwarding. Window-state
+  persistence now drains pending writes with a bounded quit deadline.
+- Added live system appearance palettes, external file drops on desktop and Web,
+  and native file icons with a bounded cache.
+- Added bounded private application logging and `rake ctl logs` for reading and
+  following logs. Runtime diagnostics redact user content.
+- Added styled selectable paragraphs and accessible inline and standalone links
+  with keyboard activation and drag selection. Published Rake uses the stock
+  GPUI Base 0.9.0 window selection. Its Root trims leading and trailing
+  whitespace on copy and binds Control-C on Web. The workspace Root also
+  preserves whitespace and binds Command-C on Web.
+- Added experimental signal-based function components and the `locale` and
+  `locale-icu` prototypes for Fluent messages, locale switching, and ICU number
+  and date formatting. Inspection can find controls by their message keys.
+- Improved CLI Windows inspection and source opening, development profile
+  diagnostics, and view syntax support. Registry scaffolds pin SDK alpha.6.
+- Released the first `rake-shortcuts` package along with the changed supporting
+  crates at alpha.5.
+
 ## CLI 0.1.0-alpha.6 — 2026-11-14
 
 - Pins Blaze rake.3, fixing missing dependency manifests such as `hdrhistogram`
