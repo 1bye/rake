@@ -522,19 +522,20 @@ mod suite {
                         }
 
                         let native_window = button.as_appkit().window().unwrap();
+                        let content = native_window.contentView().unwrap();
 
                         assert!(!has_toolbar(&native_window));
-                        // SAFETY: NSToolbar and its standard print item are created
-                        // on the main thread; NSWindow retains the installed toolbar.
+                        // SAFETY: The window retains the installed toolbar and its live
+                        // content hierarchy. All AppKit operations run on the main thread.
                         unsafe {
                             let toolbar: Retained<AnyObject> = msg_send![AnyClass::get(c"NSToolbar").unwrap(), new];
-                            let _: () = msg_send![&*toolbar, insertItemWithItemIdentifier: &*NSString::from_str("NSToolbarPrintItem"), atIndex: 0_isize];
                             let _: () = msg_send![&*native_window, setToolbar: &*toolbar];
+                            let _: () = msg_send![&*toolbar, insertItemWithItemIdentifier: &*NSString::from_str("NSToolbarPrintItem"), atIndex: 0_isize];
+                            content.superview().unwrap().layoutSubtreeIfNeeded();
                         }
 
                         assert!(has_toolbar(&native_window), "a toolbar added after mounting is immediately discoverable");
                         let children = native_window.accessibilityChildren().unwrap();
-                        let content = native_window.contentView().unwrap();
 
                         for expected in [&*content, &*group] {
                             assert!(

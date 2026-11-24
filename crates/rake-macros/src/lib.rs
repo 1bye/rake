@@ -139,10 +139,22 @@ pub fn command(input: TokenStream) -> TokenStream {
 }
 
 fn facade() -> syn::Result<Tokens> {
-    match crate_name("rake-app").or_else(|_| crate_name("rak")) {
+    let (package, found) = ["rake-app", "rak", "rake-gpui", "rake-core"]
+        .into_iter()
+        .find_map(|package| crate_name(package).ok().map(|found| (package, found)))
+        .ok_or_else(|| {
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "a rake-app, rake-gpui or rake-core dependency is required",
+            )
+        })?;
+
+    match (package, found) {
         // Without a dependency rename, Cargo uses the facade library target name.
-        Ok(FoundCrate::Itself) => Ok(quote!(::rake)),
-        Ok(FoundCrate::Name(name)) => {
+        ("rake-core", FoundCrate::Itself) => Ok(quote!(::rake_core)),
+        ("rake-gpui", FoundCrate::Itself) => Ok(quote!(::rake_gpui)),
+        (_, FoundCrate::Itself) => Ok(quote!(::rake)),
+        (_, FoundCrate::Name(name)) => {
             let name = match name.as_str() {
                 "rake_app" | "rak" => "rake",
                 _ => &name,
@@ -152,7 +164,6 @@ fn facade() -> syn::Result<Tokens> {
 
             Ok(quote!(::#name))
         }
-        Err(error) => Err(syn::Error::new(proc_macro2::Span::call_site(), error)),
     }
 }
 

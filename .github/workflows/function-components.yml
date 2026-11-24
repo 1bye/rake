@@ -59,7 +59,7 @@ jobs:
             mesa-vulkan-drivers xvfb fonts-dejavu-core
       - name: Test runtime and inspection
         run: >-
-          cargo test -p rake-app --features experimental-reactive,view-test-support,devtools --lib --locked
+          cargo test -p rake-gpui --features experimental-reactive,view-test-support,devtools --lib --locked
       - name: Test consumer behavior
         run: cargo test -p rake-app --locked --features experimental-reactive,view-test-support,devtools --test function_components --test view --test view_components --test view_state
       - name: Check component consumers and targets
@@ -69,7 +69,7 @@ jobs:
           cargo check -p rake-view --locked --all-targets --features rake/experimental-reactive,rake/view-test-support
           cargo test -p rake-view-syntax -p rake-macros -p rake-protocol --locked --features rake-macros/reactive
           cargo test -p rake-view-syntax --locked
-          cargo test -p rake-app --locked --features experimental-reactive,view-test-support --doc
+          cargo test -p rake-gpui --locked --features experimental-reactive,view-test-support --doc
           cargo check -p rake-app -p renamed-facade --locked --features rake-app/experimental-reactive,renamed-facade/experimental-reactive --target wasm32-unknown-unknown --lib
           cargo check -p rake-app --locked --features view-test-support --lib
           cargo check -p rake-app -p rake-macros --locked --no-default-features --lib

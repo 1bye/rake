@@ -5,6 +5,25 @@ Build the CLI with `cargo build -p rake-app-cli` (or install it with
 toolchain on PATH; no Python interpreter is required. Repository-only Python
 verification scripts still require Python 3.11+.
 
+## Workspace crates
+
+- [`rake-app`](../crates/rake) is the public `rake` facade used by apps,
+  templates and renamed-dependency consumers.
+- [`rake-core`](../crates/rake-core) owns the portable runtime, router and
+  route mount contract, services, tasks, storage, diagnostics and control.
+  Custom hosts can use it directly on native targets and WASM.
+- [`rake-gpui`](../crates/rake-gpui) builds on the core. It implements the
+  application builder, GPUI routing and view bindings, managed native and
+  browser startup, window observation and devtools capture.
+
+Keep application examples on the facade. Run core tests with
+`cargo test -p rake-core --locked`, and run GPUI adapter unit tests with
+`cargo test -p rake-gpui --features view-test-support --locked`. The facade
+retains its integration and UI tests, including macro expansion and public
+path checks.
+
+## Development commands
+
 On Windows, `rake doctor`, `rake build`, native/Web `rake bundle` and the Node
 agent client are supported. Development supervision and native local inspection
 (`dev`, `inspect`, `ctl` and `cdp`) currently require Unix. The remaining Windows

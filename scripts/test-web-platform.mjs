@@ -22,8 +22,10 @@ cli = Path(os.environ.get('RAKE_CLI', str(Path(os.environ.get('CARGO_TARGET_DIR'
 for label in ['old', 'new']:
     site = work / (label + '-source')
     site.mkdir()
-    (site / 'platform.js').write_text((root / 'crates/rake/src/platform/browser.js').read_text())
-    (site / 'runtime.js').write_text((root / 'crates/rake/src/web/browser.js').read_text())
+    for crate in ['rake-core', 'rake-gpui']:
+        (site / f'{crate}-platform.js').write_text((root / 'crates' / crate / 'src/platform/browser.js').read_text())
+    (site / 'platform.js').write_text('export * from "./rake-core-platform.js"; export * from "./rake-gpui-platform.js";')
+    (site / 'runtime.js').write_text((root / 'crates/rake-core/src/web/browser.js').read_text())
     (site / 'count.worker.js').write_text('self.onmessage=e=>self.postMessage(JSON.stringify({length:JSON.parse(e.data).text.length,build:' + json.dumps(label) + '}));')
     (site / 'never.worker.js').write_text('self.onmessage=()=>{};')
     (site / 'index.html').write_text('<html><head></head><body><button id="pick">Pick file</button><script type="module">import * as platform from "./platform.js"; import * as runtime from "./runtime.js"; import * as fixture from "./pkg/rake_web_host_fixture.js"; await fixture.default();fixture.start();window.fixture=fixture;window.platform=platform;window.runtime=runtime;window.workersStarted=0;window.workersTerminated=0;window.Worker=class extends window.Worker {constructor(...args){super(...args);window.workersStarted++;}terminate(){window.workersTerminated++;super.terminate();}};window.build=' + json.dumps(label) + ';document.querySelector("#pick").onclick=async()=>{try{const f=await platform.pick_file();window.picked=f?{name:f.name,text:new TextDecoder().decode(await platform.read_file(f,100))}:null;}catch(e){window.pickError=e.message;}};window.ready=true;</script></body></html>')

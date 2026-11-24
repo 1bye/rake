@@ -234,6 +234,7 @@ impl Running {
         serde_json::from_slice(&fs::read(self.session.join("status.json")).unwrap()).unwrap()
     }
 
+    #[track_caller]
     fn phase(&self, phase: &str) -> Value {
         wait(|| {
             let value = self.status();
@@ -307,8 +308,10 @@ fn remove_early_session(pid: u32, started: SystemTime) {
     }
 }
 
+#[track_caller]
 fn wait<T>(mut probe: impl FnMut() -> Option<T>) -> T {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // Parallel supervisor fixtures compete to start and schedule child processes.
+    let deadline = Instant::now() + Duration::from_secs(30);
 
     loop {
         if let Some(value) = probe() {
@@ -1163,7 +1166,11 @@ fn browser_opening_honors_browser_and_cdp_opens_only_the_companion() {
         let mut running = fixture.start_options(&args, false);
 
         running.phase("watching");
-        let args = wait(|| fs::read_to_string(running.control.join("browser-args")).ok());
+        let args = wait(|| {
+            let args = fs::read_to_string(running.control.join("browser-args")).ok()?;
+
+            (args.lines().count() >= 2 && args.ends_with('\n')).then_some(args)
+        });
 
         assert_eq!(args.lines().take(1).collect::<Vec<_>>(), ["--test"]);
         assert_eq!(args.lines().count(), 2, "open exactly one browser URL");

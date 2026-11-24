@@ -61,9 +61,9 @@ automated through Chrome's paste guard.
 
 ```sh
 cargo test -p rake-app-cli --offline
-cargo test -p rake-app --features view-test-support,devtools --lib inspection --offline
+cargo test -p rake-gpui --features view-test-support,devtools --lib inspection --offline
 cargo clippy -p rake-app-cli -p rake-app --all-targets --features rake-app/view-test-support --offline -- -D warnings
-cargo test -p rake-app --no-default-features --lib --offline
+cargo test -p rake-core --lib --offline
 cargo check -p rake-app -p rake-view --lib --target wasm32-unknown-unknown --offline
 cargo build -p rake-app-cli -p rake-view --features rake/devtools --offline
 node scripts/test-elements-cdp.mjs

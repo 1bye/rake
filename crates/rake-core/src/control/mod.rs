@@ -1,0 +1,810 @@
+//! Versioned runtime commands, queries and revisioned state events shared by all clients.
+//!
+//! Dispatch stays on the host event loop. Transport messages contain owned data and
+//! never grant filesystem, process or arbitrary Rust evaluation capabilities.
+//! Operation submission is eager; disconnecting only stops observation.
+//!
+//! ```
+//! # use rake_core as rake;
+//! use rake::control::{Message, Query, Reply, Request, PROTOCOL_VERSION};
+//! use rake::router::{NoRoute, Router, RouterConfig};
+//! let router = Router::<NoRoute>::new(RouterConfig::default());
+//! let reply = router.client().request(Request {
+//!     protocol: PROTOCOL_VERSION, runtime_id: router.runtime_id(), key: None,
+//!     message: Message::Query(Query::Info {}),
+//! }).unwrap();
+//! assert!(matches!(reply, Reply::Info(_)));
+//! ```
+
+mod commands;
+#[cfg(any(unix, windows, target_family = "wasm"))]
+mod host;
+mod memory;
+
+#[cfg(any(unix, windows, target_family = "wasm"))]
+#[doc(hidden)]
+pub use host::HostClient;
+
+pub use commands::*;
+
+#[cfg(any(unix, windows))]
+pub mod local;
+#[cfg(target_family = "wasm")]
+mod web;
+
+pub use rake_protocol::control::*;
+#[cfg(target_family = "wasm")]
+pub use web::{WebBridge, WebBridgeConfig};
+
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use serde_json::json;
+
+use crate::router::{OperationId, Route, Router};
+
+struct SavedRequest {
+    command: Command,
+    reply: Result<Reply, ControlError>,
+}
+
+pub(crate) struct ClientState {
+    #[cfg(feature = "devtools")]
+    inspection: std::cell::OnceCell<Box<dyn crate::inspection::InspectionHost>>,
+    commands: RefCell<Commands>,
+    services: RefCell<crate::services::ServiceRegistry>,
+    responses: Cell<usize>,
+    response_event: event_listener::Event,
+    capacity: usize,
+    requests: RefCell<BTreeMap<String, SavedRequest>>,
+}
+
+impl ClientState {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            #[cfg(feature = "devtools")]
+            inspection: std::cell::OnceCell::new(),
+            commands: RefCell::new(Commands::new()),
+            services: RefCell::new(crate::services::ServiceRegistry::new()),
+            responses: Cell::new(0),
+            response_event: event_listener::Event::new(),
+            capacity,
+            requests: RefCell::new(BTreeMap::new()),
+        }
+    }
+}
+
+// A native host must let accepted transport responses reach the socket before exit.
+#[cfg(any(unix, windows, target_family = "wasm"))]
+pub(crate) struct ResponseGuard(Rc<ClientState>);
+
+#[cfg(any(unix, windows, target_family = "wasm"))]
+impl Drop for ResponseGuard {
+    fn drop(&mut self) {
+        self.0.responses.set(self.0.responses.get() - 1);
+        self.0.response_event.notify(usize::MAX);
+    }
+}
+
+/// A local client of the authoritative runtime. Clones share request idempotency.
+/// The host owns `Router::run`; this client never creates an executor or worker thread.
+/// Clients retain runtime state; dropping the host driver still stops admission/work.
+/// Views can use `PageContext::dispatch` through their weak page navigator.
+#[derive(Clone)]
+pub struct RuntimeClient<R: Route> {
+    router: Router<R>,
+    state: Rc<ClientState>,
+}
+
+impl<R: Route> RuntimeClient<R> {
+    pub(crate) fn new(router: Router<R>, state: Rc<ClientState>) -> Self {
+        Self { router, state }
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub(crate) fn router(&self) -> &Router<R> {
+        &self.router
+    }
+
+    #[cfg(any(unix, windows, target_family = "wasm"))]
+    pub(crate) fn begin_response(&self) -> ResponseGuard {
+        self.state.responses.set(self.state.responses.get() + 1);
+
+        ResponseGuard(self.state.clone())
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[doc(hidden)]
+    pub async fn responses_idle(&self) {
+        loop {
+            let listener = self.state.response_event.listen();
+
+            if self.state.responses.get() == 0 {
+                return;
+            }
+
+            listener.await;
+        }
+    }
+
+    /// Describes the actual portable capabilities, version and retention limits.
+    pub fn info(&self) -> RuntimeInfo {
+        let (completed_operations, pending_operations) = self.router.operation_limits();
+
+        RuntimeInfo {
+            element_inspection: self.inspection().status(),
+            element_interaction: self.inspection().status()
+                != crate::inspection::Status::Unavailable,
+            protocol: PROTOCOL_VERSION,
+            runtime_id: self.router.runtime_id(),
+            platform: if cfg!(target_family = "wasm") {
+                "web"
+            } else {
+                "native"
+            }
+            .into(),
+            commands: Command::names()
+                .iter()
+                .filter(|name| **name != "record_memory" || memory::available())
+                .filter(|name| **name != "edit_storage" || cfg!(feature = "devtools"))
+                .filter(|name| **name != "preview_input" || self.inspection().preview_enabled())
+                .map(|name| (*name).into())
+                .collect(),
+            queries: Query::names()
+                .iter()
+                .filter(|name| **name != "memory" || memory::available())
+                .filter(|name| **name != "storage" || cfg!(feature = "devtools"))
+                .filter(|name| !name.starts_with("preview") || self.inspection().preview_enabled())
+                .map(|name| (*name).into())
+                .collect(),
+            supported_targets: self.router.supported_targets(),
+            completed_operations,
+            pending_operations,
+            idempotency_capacity: self.state.capacity,
+        }
+    }
+
+    /// Validates protocol/runtime before dispatch. Application mutations require a key.
+    /// Leased development highlight/picker commands are transient and do not retain keys.
+    /// Keys are retained for this runtime's entire lifetime, including failures.
+    /// Exhaustion rejects new keys instead of silently allowing duplicate retries.
+    pub fn request(&self, request: Request) -> Result<Reply, ControlError> {
+        if request.protocol != PROTOCOL_VERSION {
+            return Err(ControlError::ProtocolVersion {
+                expected: PROTOCOL_VERSION,
+            });
+        }
+
+        if request.runtime_id != self.router.runtime_id() {
+            return Err(ControlError::WrongRuntime);
+        }
+
+        if self.router.is_shutdown() {
+            return Err(ControlError::RuntimeShutdown);
+        }
+
+        match request.message {
+            Message::Query(query) => self.query(query),
+            Message::Command(command) => {
+                // Transient inspection controls must not fill the lifetime mutation-key registry.
+                if matches!(
+                    command,
+                    Command::PreviewInput { .. }
+                        | Command::HighlightElement { .. }
+                        | Command::InspectMode { .. }
+                        | Command::NavigateElement { .. }
+                        | Command::EditElementStyle { .. }
+                        | Command::EditElementText { .. }
+                        | Command::RecordFrames { .. }
+                        | Command::RecordMemory { .. }
+                ) {
+                    return self.command(&command);
+                }
+
+                let key = request
+                    .key
+                    .filter(|key| !key.is_empty() && key.len() <= 128)
+                    .ok_or(ControlError::InvalidRequestKey)?;
+
+                if let Some(previous) = self.state.requests.borrow().get(&key) {
+                    return if previous.command == command {
+                        previous.reply.clone()
+                    } else {
+                        Err(ControlError::KeyConflict)
+                    };
+                }
+
+                if self.state.requests.borrow().len() >= self.state.capacity {
+                    return Err(ControlError::RequestCapacity);
+                }
+
+                let reply = self.command(&command);
+
+                self.state.requests.borrow_mut().insert(
+                    key,
+                    SavedRequest {
+                        command,
+                        reply: reply.clone(),
+                    },
+                );
+
+                reply
+            }
+        }
+    }
+
+    /// Dispatches async storage inspection as well as ordinary runtime requests.
+    /// Backend I/O runs on the caller's local executor; transports use this path.
+    #[cfg(feature = "devtools")]
+    pub async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
+        use crate::storage::devtools::Storage;
+
+        if !Storage::accepts(&request) {
+            return self.request(request);
+        }
+
+        self.request(Request {
+            message: Message::Query(Query::Info {}),
+            ..request.clone()
+        })?;
+        let storage = self
+            .services()
+            .get::<Storage>()
+            .map(|storage| storage.as_ref().clone())
+            .unwrap_or_default();
+
+        let Message::Command(command) = &request.message else {
+            return storage.request(request).await;
+        };
+
+        let key = request
+            .key
+            .as_ref()
+            .filter(|key| !key.is_empty() && key.len() <= 128)
+            .ok_or(ControlError::InvalidRequestKey)?
+            .clone();
+
+        {
+            let requests = self.state.requests.borrow();
+
+            if let Some(saved) = requests.get(&key) {
+                return if saved.command == *command {
+                    saved.reply.clone()
+                } else {
+                    Err(ControlError::KeyConflict)
+                };
+            }
+
+            if requests.len() >= self.state.capacity {
+                return Err(ControlError::RequestCapacity);
+            }
+        }
+        let command = command.clone();
+
+        // Reserve in the same lifetime key space as all other app mutations.
+        // Cancellation retains uncertainty instead of admitting a duplicate write.
+        self.state.requests.borrow_mut().insert(
+            key.clone(),
+            SavedRequest {
+                command: command.clone(),
+                reply: Err(ControlError::Storage {
+                    reason:
+                        "edit pending or response cancelled; inspect storage before another write"
+                            .into(),
+                }),
+            },
+        );
+        let reply = storage.request(request).await;
+
+        self.state.requests.borrow_mut().insert(
+            key,
+            SavedRequest {
+                command,
+                reply: reply.clone(),
+            },
+        );
+
+        reply
+    }
+
+    /// Captures an initial snapshot and revision atomically on the local event loop.
+    /// `next` checks that revision before awaiting, avoiding a subscription gap.
+    pub fn watch(&self) -> RuntimeWatch<R> {
+        RuntimeWatch {
+            client: self.clone(),
+            current: self.router.snapshot(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn set_commands(&self, commands: Commands) {
+        *self.state.commands.borrow_mut() = commands;
+    }
+
+    #[doc(hidden)]
+    pub fn set_services(&self, services: crate::services::ServiceRegistry) {
+        *self.state.services.borrow_mut() = services;
+    }
+
+    /// Application composition shared with routed views. Registrations on a returned
+    /// snapshot do not mutate the running application's service set.
+    pub fn services(&self) -> crate::services::ServiceRegistry {
+        self.state.services.borrow().clone()
+    }
+
+    /// Registers application commands before driving the host. Existing handles share this registry.
+    pub fn commands(&self) -> Commands {
+        self.state.commands.borrow().clone()
+    }
+
+    /// Dispatches typed application arguments through the same wire operation and result registry.
+    pub fn dispatch<C: ApplicationCommand>(
+        &self,
+        command: C,
+        key: String,
+    ) -> Result<Reply, ControlError> {
+        self.request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: self.info().runtime_id,
+            key: Some(key),
+            message: Message::Command(Command::Run {
+                id: C::id(),
+                arguments: serde_json::to_value(command)
+                    .map_err(|error| CommandError::Arguments(error.to_string()))?,
+            }),
+        })
+    }
+
+    /// Executes a local typed user action through the shared command scheduler.
+    /// Unlike transport dispatch, this does not retain a retry key. Repeated calls
+    /// are distinct actions; use `dispatch` when a remote retry must be deduplicated.
+    /// # Errors
+    /// Rejects stopped runtimes, malformed arguments and unavailable command/window capabilities.
+    pub fn execute<C: ApplicationCommand>(&self, command: C) -> Result<Reply, ControlError> {
+        self.dispatch_local_command(
+            C::id(),
+            serde_json::to_value(command)
+                .map_err(|error| CommandError::Arguments(error.to_string()))?,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn dispatch_local_command(
+        &self,
+        id: String,
+        arguments: serde_json::Value,
+    ) -> Result<Reply, ControlError> {
+        if self.router.is_shutdown() {
+            return Err(ControlError::RuntimeShutdown);
+        }
+
+        self.command(&Command::Run { id, arguments })
+    }
+
+    fn command(&self, command: &Command) -> Result<Reply, ControlError> {
+        let navigator = self.router.navigator();
+
+        let id: OperationId = match command {
+            Command::EditStorage { .. } => {
+                return Err(ControlError::Unsupported {
+                    operation:
+                        "async storage dispatch; use request_async or the development transport"
+                            .into(),
+                });
+            }
+            Command::RecordMemory {
+                owner,
+                enabled,
+                interval,
+                lease_ms,
+            } => {
+                return memory::record(owner, *enabled, *interval, *lease_ms);
+            }
+            Command::RecordFrames { enabled, lease_ms } => {
+                self.inspection().record_frames(*enabled, *lease_ms)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::EditElementText {
+                id,
+                generation,
+                edit,
+            } => {
+                self.inspection().edit_text(id, generation, edit)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::EditElementStyle {
+                id,
+                generation,
+                edit,
+            } => {
+                self.inspection().edit_style(id, generation, edit)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::NavigateElement {
+                id,
+                generation,
+                action,
+            } => {
+                self.inspection().navigate(id, generation, *action)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::PreviewInput { point, input } => {
+                self.inspection().preview_input(point, input)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::HighlightElement { id, generation } => {
+                self.inspection().highlight(id.as_deref(), generation)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::InspectMode { enabled, lease_ms } => {
+                self.inspection().inspect_mode(*enabled, *lease_ms)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+
+            Command::CloseWindow { window } => self.router.close_window(*window).id(),
+            Command::Quit { options } => self.router.quit(*options).id(),
+            Command::PrepareReload { request } => {
+                return Ok(Reply::Reload(self.router.prepare_reload(request.clone())?));
+            }
+            Command::FinishReload { id, applied } => {
+                return Ok(Reply::Reload(self.router.finish_reload(id, *applied)?));
+            }
+            Command::Open {
+                window,
+                destination,
+                options,
+            } => navigator
+                .for_window(window.unwrap_or(navigator.window_id()))
+                .open_with(R::decode(destination)?, *options)
+                .id(),
+            Command::Navigate {
+                tab,
+                destination,
+                replace,
+            } => {
+                let destination = R::decode(destination)?;
+                let tab = navigator.tab(*tab);
+
+                if *replace {
+                    tab.replace(destination).id()
+                } else {
+                    tab.navigate(destination).id()
+                }
+            }
+            Command::Reveal {
+                window,
+                scope,
+                destination,
+            } => navigator
+                .for_window(window.unwrap_or(navigator.window_id()))
+                .reveal(R::decode(destination)?, *scope)
+                .id(),
+            Command::Select { tab } => navigator.tab(*tab).select().id(),
+            Command::Close { tab } => navigator.tab(*tab).close().id(),
+            Command::Back { tab } => navigator.tab(*tab).back().id(),
+            Command::Forward { tab } => navigator.tab(*tab).forward().id(),
+            Command::Mode { tab, mode } => navigator.tab(*tab).set_mode(*mode).id(),
+            Command::CancelOperation { operation } => {
+                return Ok(Reply::Accepted {
+                    accepted: self.router.cancel(*operation)?,
+                });
+            }
+            Command::Respond { decision, choice } => {
+                navigator.respond(*decision, choice)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::Run { id, arguments } => {
+                let commands = self.commands();
+
+                let context = CommandContext {
+                    services: self.services(),
+                    app: self.router.app(),
+                    cancellation: crate::http::CancellationToken::new(),
+                };
+
+                let token = context.cancellation.clone();
+
+                let future =
+                    commands.prepare(id, arguments.clone(), self.router.has_window(), context)?;
+
+                return Ok(Reply::Submitted {
+                    operation_id: self.router.submit_command(id, token, future).id(),
+                });
+            }
+            Command::CancelTask { task } => {
+                return Ok(Reply::Accepted {
+                    accepted: self.router.cancel_task(*task)?,
+                });
+            }
+        };
+
+        Ok(Reply::Submitted { operation_id: id })
+    }
+
+    #[cfg(any(unix, windows, target_family = "wasm"))]
+    #[doc(hidden)]
+    pub fn into_host(self) -> HostClient {
+        HostClient::new(self)
+    }
+
+    fn inspection(&self) -> &dyn crate::inspection::InspectionHost {
+        #[cfg(feature = "devtools")]
+        if let Some(host) = self.state.inspection.get() {
+            return host.as_ref();
+        }
+
+        &crate::inspection::Unavailable
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "devtools")]
+    pub fn inspection_host<T: crate::inspection::InspectionHost>(
+        &self,
+        init: impl FnOnce() -> T,
+    ) -> &T {
+        let host = self.state.inspection.get_or_init(|| Box::new(init()));
+
+        (host.as_ref() as &dyn std::any::Any)
+            .downcast_ref()
+            .expect("a runtime has one inspection provider")
+    }
+
+    fn query(&self, query: Query) -> Result<Reply, ControlError> {
+        match query {
+            Query::Storage { .. } => Err(ControlError::Unsupported {
+                operation: "async storage dispatch; use request_async or the development transport"
+                    .into(),
+            }),
+            Query::Windows {} => Ok(Reply::Data(
+                serde_json::to_value(self.router.window_snapshots())
+                    .expect("window snapshots serialize"),
+            )),
+            Query::Window { window } => {
+                Ok(Reply::Snapshot(self.router.snapshot_in_window(window)?))
+            }
+            Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
+            Query::InspectPick {} => Ok(Reply::InspectPick(self.inspection().pick()?)),
+            Query::Preview {} => Ok(Reply::Data(
+                serde_json::to_value(self.inspection().preview_windows())
+                    .expect("preview windows serialize"),
+            )),
+            Query::PreviewElement { point } => {
+                Ok(Reply::Element(self.inspection().preview_element(&point)?))
+            }
+            Query::InspectTreePage { generation, offset } => Ok(Reply::ElementPage(
+                self.inspection().tree_page(generation.as_deref(), offset)?,
+            )),
+            Query::Frames { after } => Ok(Reply::Frames(
+                self.router.frame_records(self.inspection(), after),
+            )),
+            Query::Memory {
+                owner,
+                include_freed,
+            } => memory::snapshot(&owner, include_freed),
+            Query::InspectTree {} => Ok(Reply::Elements(self.inspection().snapshot())),
+            Query::InspectWindow {
+                window,
+                presentation,
+                offset,
+            } => Ok(Reply::InspectionWindow(self.inspection().window_page(
+                window,
+                presentation.as_deref(),
+                offset,
+            )?)),
+            Query::InspectRevision {} => {
+                Ok(Reply::InspectionRevision(self.inspection().tree_revision()))
+            }
+            Query::InspectElement { id } => Ok(Reply::Element(self.inspection().element(&id)?)),
+            Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),
+            Query::Checkpoint { application_id } => Ok(Reply::Checkpoint(
+                self.router.reload_checkpoint(&application_id)?,
+            )),
+            Query::PartialCheckpoint { application_id } => Ok(Reply::Checkpoint(
+                self.router.reload_partial_checkpoint(&application_id)?,
+            )),
+            Query::Info {} => Ok(Reply::Info(self.info())),
+            Query::Schema {} => Ok(Reply::Data(json!({
+                "protocol": PROTOCOL_VERSION,
+                "commands": Command::names(), "queries": Query::names(),
+                "request": {"protocol": PROTOCOL_VERSION, "runtime_id": self.info().runtime_id,
+                    "key": "unique-client-request-key", "message": {"type": "query", "value": {"type": "info"}}},
+                "routes": R::descriptors(),
+            }))),
+            Query::Commands {} => Ok(Reply::Data(
+                serde_json::to_value(self.commands().descriptors())
+                    .expect("command schema serialization"),
+            )),
+            Query::Routes {} => Ok(Reply::Data(
+                serde_json::to_value(R::descriptors()).expect("route schema serialization"),
+            )),
+            Query::Snapshot {} => Ok(Reply::Snapshot(self.router.snapshot())),
+            Query::Tabs {} => Ok(Reply::Data(
+                serde_json::to_value(self.router.tab_snapshots()).expect("tab serialization"),
+            )),
+            Query::Tasks { owner } => {
+                let tasks = self.router.task_snapshots(owner);
+
+                Ok(Reply::Data(
+                    serde_json::to_value(tasks).expect("task serialization"),
+                ))
+            }
+            Query::Operations {} => Ok(Reply::Data(
+                serde_json::to_value(self.router.operation_snapshots())
+                    .expect("status serialization"),
+            )),
+            Query::Operation { operation } => Ok(Reply::Operation(OperationRecord {
+                operation_id: operation,
+                state: self.router.operation(operation)?,
+                result: self.router.operation_result(operation),
+            })),
+            Query::Decisions {} => Ok(Reply::Data(
+                serde_json::to_value(self.router.decision_snapshots())
+                    .expect("decision serialization"),
+            )),
+            Query::Events { cursor } => {
+                let current = EventCursor {
+                    runtime_id: self.router.runtime_id(),
+                    epoch: 1,
+                    revision: self.router.revision(),
+                };
+
+                let event = if cursor == Some(current) {
+                    RuntimeEvent {
+                        cursor: current,
+                        kind: EventKind::Unchanged,
+                        snapshot: None,
+                    }
+                } else {
+                    event(self.router.snapshot(), cursor)
+                };
+
+                Ok(Reply::Event(event))
+            }
+            Query::HttpBody {
+                request_id,
+                response,
+            } => Ok(Reply::Data(self.router.http_body(request_id, response))),
+            Query::Logs { after } => Ok(Reply::Logs(self.router.logs(after))),
+            Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
+                self.router.diagnostics(after, kind.as_deref()),
+            )),
+        }
+    }
+}
+
+fn event(snapshot: crate::router::RouterSnapshot, previous: Option<EventCursor>) -> RuntimeEvent {
+    let cursor = EventCursor {
+        runtime_id: snapshot.runtime_id,
+        epoch: 1,
+        revision: snapshot.revision,
+    };
+
+    let kind = match previous {
+        None => EventKind::Snapshot,
+        Some(previous) if previous == cursor => EventKind::Unchanged,
+        Some(previous)
+            if previous.runtime_id == cursor.runtime_id
+                && previous.epoch == cursor.epoch
+                && previous.revision.checked_add(1) == Some(cursor.revision) =>
+        {
+            EventKind::Changed
+        }
+        Some(_) => EventKind::Gap,
+    };
+
+    RuntimeEvent {
+        cursor,
+        kind,
+        snapshot: if kind == EventKind::Unchanged {
+            None
+        } else {
+            Some(snapshot)
+        },
+    }
+}
+
+/// Revisioned local observation. State notifications can coalesce; a skipped revision
+/// is an explicit `Gap` event carrying a new authoritative snapshot, never inferred logs.
+pub struct RuntimeWatch<R: Route> {
+    client: RuntimeClient<R>,
+    current: crate::router::RouterSnapshot,
+}
+
+impl<R: Route> RuntimeWatch<R> {
+    /// The last authoritative snapshot, initially captured when the watch was created.
+    pub fn snapshot(&self) -> &crate::router::RouterSnapshot {
+        &self.current
+    }
+
+    /// Waits for a state change. Dropping the wait never cancels runtime operations.
+    pub async fn next(&mut self) -> Result<RuntimeEvent, ControlError> {
+        if self.client.router.is_shutdown() {
+            return Err(ControlError::RuntimeShutdown);
+        }
+
+        self.client.router.changed(self.current.revision).await;
+        let previous = EventCursor {
+            runtime_id: self.current.runtime_id,
+            epoch: 1,
+            revision: self.current.revision,
+        };
+
+        self.current = self.client.router.snapshot();
+
+        Ok(event(self.current.clone(), Some(previous)))
+    }
+}
+
+/// Runner development endpoint policy. Release and debug builds both default to Disabled.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ControlConfig {
+    /// No listener, discovery files or outbound bridge.
+    #[default]
+    Disabled,
+    /// Native requires `RAKE_DEV_CONTROL=1`; Web requires injected same-origin metadata.
+    /// Element inspection additionally requires the opt-in `devtools` Cargo feature.
+    FromEnvironment,
+}
+
+#[cfg(test)]
+#[cfg(feature = "devtools")]
+mod inspection_control_tests {
+    //! Covers: leased commands bypass operation/key retention while preserving runtime validation.
+    //! Real: shared client dispatcher and inspection store. Doubles: an empty captured host.
+    use super::*;
+    use crate::router::{NoRoute, RouterConfig};
+
+    #[test]
+    fn development_lease_renewals_never_fill_application_retry_capacity() {
+        let router = Router::<NoRoute>::new(RouterConfig::default());
+        let client = router.client();
+
+        assert!(!client.info().element_interaction);
+        struct Captured;
+
+        impl crate::inspection::InspectionHost for Captured {
+            fn status(&self) -> crate::inspection::Status {
+                crate::inspection::Status::Captured
+            }
+
+            fn inspect_mode(
+                &self,
+                _: bool,
+                _: u64,
+            ) -> Result<(), crate::inspection::InspectionError> {
+                Ok(())
+            }
+        }
+
+        client.inspection_host(|| Captured);
+
+        for _ in 0..2048 {
+            let reply = client
+                .request(Request {
+                    protocol: PROTOCOL_VERSION,
+                    runtime_id: router.runtime_id(),
+                    key: None,
+                    message: Message::Command(Command::InspectMode {
+                        enabled: true,
+                        lease_ms: 1000,
+                    }),
+                })
+                .unwrap();
+
+            assert!(matches!(reply, Reply::Acknowledged));
+        }
+
+        assert!(client.state.requests.borrow().is_empty());
+        assert!(router.snapshot().operations.is_empty());
+        assert!(client.info().element_interaction);
+    }
+}

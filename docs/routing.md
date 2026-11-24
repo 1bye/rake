@@ -75,6 +75,25 @@ The runner installs the default tab strip, route outlet and decision presenter. 
 
 A custom GPUI host can use `Router::in_window`, own its `run` future, observe `changed`, and compose `TabBar` and `RouteOutlet`. `Router::new` is a headless state model without GPUI resources.
 
+### Mounting routes in another UI framework
+
+Use `Router::with_route_mount(config, services, adapter)` with default features
+disabled. The adapter implements `RouteMount<R>`. Its optional `prepare` loads
+owned `PreparedPage` data with typed services and an operation cancellation token.
+Its `mount` consumes that data and gets stable window and entry IDs plus weak
+entry and navigation handles in `RouteMountContext`.
+
+The adapter returns a `MountedRoute` while its view is hidden. The router
+retains that handle across history traversal, calls `presentation_changed`
+after commit and disposes the mount if the entry rolls back or leaves history.
+During workspace restore, consume any saved state with
+`context.entry.reload_state()` before returning the mount. The router reports
+`Restored` after the initial presentation callbacks return.
+
+Poll `Router::run` on the host's event loop, report host visibility with
+`set_window_visibility` and call `shutdown` during teardown. Native integrations
+can install a `WindowHost` to open and close routed windows.
+
 ## Tabs, histories and commands
 
 `page.navigator()` binds contextual commands to that screen's original tab.

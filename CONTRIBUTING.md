@@ -21,6 +21,13 @@ LibreSSL.
 [`check.yml`](.github/workflows/check.yml) holds the complete native, Wasm, DevTools and
 documentation checks. It currently runs only when started by hand.
 
+## Application crates
+
+Use [`rake-core`](crates/rake-core) for portable runtime and routing code, and
+[`rake-gpui`](crates/rake-gpui) for the GPUI hosts, views and window bindings.
+Examples and consumer tests use the [`rake-app`](crates/rake) facade. See the
+[development guide](docs/development.md#workspace-crates) for crate-specific checks.
+
 ## Project conventions
 
 - Compiling isn't proof that something works on a platform. Say what you actually ran.

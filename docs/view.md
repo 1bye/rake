@@ -629,7 +629,7 @@ There's no global component cache or extra state runtime.
 
 Retained scroll handles work through `scroll`, and GPUI virtual lists embed through `{expression}`.
 
-The `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](../crates/rake/overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
+The `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](../crates/rake-gpui/overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
 
 ## Diagnostics and editing
 
