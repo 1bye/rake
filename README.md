@@ -86,6 +86,61 @@ presets are included by default; Kit and DevTools remain optional.
 Rake development and agents. On macOS, check that `which rake` selects Cargo's CLI
 rather than the system Ruby tool.
 
+### Experimental reactive components
+
+To use `#[rake::component]`, update the `rake` dependency in `Cargo.toml` to SDK
+alpha.7 and enable `experimental-reactive`.
+
+```toml
+[dependencies]
+rake = { package = "rake-app", version = "=0.1.0-alpha.7", features = ["experimental-reactive"] }
+```
+
+Replace the generated `src/lib.rs` with this counter and run `rake dev`. Each click
+updates the signal and recomputes the doubled value.
+
+```rust
+use rake::App;
+use rake::gpui::{AppContext, Context, IntoElement, Render, Window};
+use rake::reactive::Setup;
+
+#[rake::component]
+fn Counter(cx: &mut Setup) -> impl IntoElement {
+    let count = cx.signal(0_i32);
+    let doubled = cx.memo(move |cx| count.get(cx) * 2);
+
+    rake::view! {
+        <main class="size-full flex flex-col gap-4 p-6">
+            <div>"Clicks: " {count} " · Doubled: " {doubled}</div>
+            <button id="increment" on:click={move |cx| count.update(cx, |value| *value += 1)}>
+                Increment
+            </button>
+        </main>
+    }
+}
+
+struct CounterWindow;
+
+impl Render for CounterWindow {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        rake::view! {
+            <Counter id="clicks" />
+        }
+    }
+}
+
+#[rake::app]
+fn app() -> App {
+    App::new("com.example.hello-rake").root(|_, _, cx| cx.new(|_| CounterWindow).into())
+}
+```
+
+`App::root` takes a GPUI view entity backed by `Render`. `CounterWindow` provides
+that entity and mounts the `RenderOnce` function component inside it.
+
+See [experimental function components](docs/experimental-view.md) for more on
+signals, props, and component state.
+
 ## Tiny examples
 
 Short snippets for what comes after the Hello window. Plain GPUI elements also work
